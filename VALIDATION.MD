@@ -2,18 +2,21 @@
 
 Verified on **2026-09-08**, macOS **26.6.2**, **arm64**, Rust **1.98.0**. This records checks against this repository's real library and executable, not the earlier isolated feasibility probes.
 
+**MVP complete within the documented full-term weekly scheduling scope.** The two remaining blockers, inaccessible small-terminal results/notices and lost CLI infeasibility with `--export`, are fixed and regression-tested. Additional platform, performance, and release-automation work is separate from MVP completion.
+
 ## Observed results
 
 - `cargo fmt --check`: passed.
-- `cargo test --locked`: **39 passed**, zero failures. Three environment-dependent tests were ignored by default and explicitly run below.
+- `cargo test --locked`: **44 passed**, zero failures. Three environment-dependent tests were ignored by default and explicitly run below.
 - `cargo clippy --all-targets --locked -- -D warnings`: passed.
 - The real f26 snapshot adapter test: **1 passed**, using downloaded `latest.json` and `latestTerm.json` files.
 - Release-mode live CLI acceptance: **1 passed**. Public Hydrant returned **2,276 subjects** for **f26**. Subject `6.1200` optimized to **4 occupied days, 0 gap minutes**, with **50 exported events**. Manual records survived refresh byte-for-byte. Switching to a same-time manual member preserved the score and exported its room. Offline use, cache fallback with age, failed-refresh preservation, JSON-search warning visibility, and overwrite rejection passed.
 - Release-mode native-terminal acceptance: **1 passed**. The actual executable ran in a native Unix PTY. Selected `6.1200` and `18.01` across separate searches, used the manual editor, optimized to **5 occupied days, 60 gap minutes**, switched the actual section, and exported **113 events**. A second export was rejected without changing the file. Both the real terminal's termios and alternate-screen mode were restored on exit.
+- Native **80×24** regression: **1 passed**, in both debug and release. The actual executable exposed the timetable, same-time member picker, final unresolved notice, and final wrapped export omission. Switching members exported **6 events** with the chosen room, and terminal restoration passed.
 - `cargo build --release --locked`: passed. The native Mach-O arm64 executable was approximately **7.7 MiB**.
 - `cargo install --path . --locked --offline --root <temporary-directory>`: passed. With an isolated environment and `PATH=/usr/bin:/bin`, the installed binary printed its version and optimized/exported the downloaded two-subject snapshot to **113 events**. Rust toolchain directories were excluded from PATH. The normal user installation and calendar accounts were not changed.
 
-That is **42 passing tests including the three opt-in checks**, plus release build and isolated installation checks.
+That is **47 passing tests including the three opt-in checks**, plus release build and isolated installation checks. The full requirement replay also rechecked data-directory precedence, cache-independent manual listing, local-snapshot cache preservation, text/JSON/help outputs, and infeasible export through the installed binary.
 
 ## Requirement-to-evidence mapping
 
@@ -25,7 +28,8 @@ That is **42 passing tests including the three opt-in checks**, plus release bui
 | Complete atomic meeting bundles and exact times | Oracle checks cover adjacency, overlap, multi-day bundles, different durations, exact-minute manual times, week/word boundaries, and midnight. Parser and model bound checks passed. |
 | Safe interchangeable actual-section selection | Grouping tests retain members and distinguish inbound/outbound incompatibilities. App-boundary tests reject incompatible final members before output creation. CLI and live PTY switching preserve the timetable and export the chosen room. |
 | Manual entry, editing, persistence, and source separation | CLI round-trip and storage tests passed for stable IDs, known components, custom published component kinds, term scoping, independent files, disabled edits, rejected scope changes, and invalid-write protection. Live refresh preserved manual bytes. |
-| TBA/unsupported data and explicit outcomes | Empty/unknown-only inputs remain unresolved, supported conflict domains return infeasible, invalid input is an error, and a set cancellation flag never produces an optimum. CLI infeasibility exits 2. Date-limited entries remain stored and visibly omitted. |
+| TBA/unsupported data and explicit outcomes | Empty/unknown-only inputs remain unresolved, supported conflict domains return infeasible, invalid input is an error, and a set cancellation flag never produces an optimum. CLI infeasibility exits 2 with or without `--export`, preserving explicit text/JSON and notices without touching output. Date-limited entries remain stored and visibly omitted. |
+| Accessible results and complete disclosure | Actual 80×24 PTY regression reaches the section picker and the final unresolved/export notices. Renderer tests reach every source/export notice, long action/output text, and verify wrapped scrolling, resize bounds, section navigation, and invalidation. |
 | Validated catalog, cache, and failure behavior | Real f26 parsing, corrupt metadata, integer overflow, blank titles, duplicate API sections, official partial-term dates, offline missing/corrupt cache, and failed-refresh cache preservation passed. A child-only unreachable proxy exercised real HTTP failure without changing machine network settings. |
 | Correct dated calendar expansion | `data_calendar` checks semester limits, holidays, alternate weekdays, New York DST offsets, deterministic UIDs, explicit omissions, next-day midnight, UTF-8 75-octet folding, CR/LF escaping, duplicate events, and invalid calendars. Ambiguous/nonexistent local times are rejected. Independent `icalendar` parsing passed. |
 | Output and terminal safety | Existing ICS content remains byte-identical after CLI/TUI overwrite attempts. Invalid member or missing calendar creates no output. Live PTY verifies a failed export remains recoverable and normal exit restores termios/alternate screen. |
@@ -45,6 +49,21 @@ A follow-up audit exercised the review fixes through the **actual release execut
 
 All six observations passed in the same live session that selected the subjects, saved an atomic manual bundle, switched an actual same-time member, and exported **113 events**. The audit did not require further application changes, only stronger direct acceptance assertions for the earlier fixes.
 
+### MVP completion acceptance
+
+Both new actual-executable regressions first failed against the previous implementation. After the fixes, the complete offline suite, all three opt-in checks, release CLI/small-terminal regressions, and isolated installation were rerun against the committed result. Existing live CLI and manual-editor workflows still passed. The 44-requirement review matrix was replayed with the two failed product behaviors changed to observed passes, retaining its explicit platform and hardening limits.
+
+| Changed behavior | Concrete check and observed result |
+|---|---|
+| Infeasible `--export`, text | `infeasible_export_preserves_status_and_never_touches_output`: explicit `Infeasible:` output, unresolved recitation warning, exit **2**. Both missing and existing output paths remain untouched. |
+| Infeasible `--export`, JSON | Same regression: `status: infeasible`, null score/export, empty sections, retained unresolved notices, exit **2**. Existing calendar bytes remain identical. Installed-binary infeasible export also preserves the prior 113-event calendar. |
+| Small-terminal results and member switching | `actual_tui_80x24_reaches_members_all_notices_and_exports`: `r` reveals the selected section, `n` changes to member **2/2**, arrows reveal either section, and export independently parses to **6 events**, including **Room A**. |
+| Complete unresolved and export notices | Same native test reaches the last of **10** added unknown-subject notices and its wrapped export omission, beyond both old notice caps. |
+| Page and section navigation remain separate | `result_pages_and_member_navigation_keep_independent_positions`: PgUp/PgDn and Home/End move the viewport without changing the selected section. Rendering preserves deliberate scrolling, while section/member navigation reveals the active row. Native key sequences also pass. |
+| Wrapping, resizing, and stale results | `result_wrapping_resize_and_invalidation_clamp_scroll`: long Unicode labels remain navigable, scrolling reaches the last notice, resizing clamps offset, and selection changes clear stale result/scroll state. |
+| Source notices, long messages, output path, and indicators | `source_and_export_notices_are_uncapped_and_reachable`: page through the real renderer and find all **12 source + 12 export notices**, full long action/path endings, notice count **24**, and scroll-position hints. Source notices are reachable before optimization. |
+| Discoverable controls at 80×24 | Native help test displays PgUp/PgDn and Home/End instructions without clipping. The compact footer and results border retain scroll/navigation hints. |
+
 ## Reproduce
 
 ```sh
@@ -52,6 +71,9 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
+
+# New actual-executable regressions, with local fixtures and no network.
+cargo test --release --locked --test cli_workflow --test tui_acceptance
 
 # Actual public network and native Unix PTY, against the release executable.
 cargo test --release --locked --test live_acceptance --test tui_acceptance -- --ignored --nocapture

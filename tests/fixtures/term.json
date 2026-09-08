@@ -1,0 +1,7 @@
+{
+  "semester": {
+    "urlName":"f26", "startDate":"2026-10-26", "endDate":"2026-11-09",
+    "h1EndDate":"2026-10-30", "h2StartDate":"2026-11-02",
+    "holidayDates":["2026-11-02"], "mondayScheduleDate":"2026-11-03"
+  }
+}

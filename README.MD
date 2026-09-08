@@ -21,7 +21,7 @@ hydrant-optimizer refresh
 hydrant-optimizer --offline search 'mathematics'
 
 # Optimize fixed subjects, showing the timetable, score and unresolved notices.
-hydrant-optimizer --offline optimize 6.1200 18.06
+hydrant-optimizer --offline optimize 6.1200 18.01
 
 # Create a manual section. The meetings are one atomic alternative, not independent choices.
 hydrant-optimizer --offline manual add --course 6.1200 --kind recitation \
@@ -29,15 +29,32 @@ hydrant-optimizer --offline manual add --course 6.1200 --kind recitation \
   --meetings 'Wed 13:05-14:00;Fri 13:05-14:00'
 
 # Export the selected schedule. Existing files are never overwritten.
-hydrant-optimizer --offline --output my-schedule.ics optimize 6.1200 18.06 --export
+hydrant-optimizer --offline --output my-schedule.ics optimize 6.1200 18.01 --export
 
 # Machine-readable results include same-time members and their stable IDs.
-hydrant-optimizer --offline --json optimize 6.1200 18.06
-hydrant-optimizer --offline optimize 6.1200 18.06 \
+hydrant-optimizer --offline --json optimize 6.1200 18.01
+hydrant-optimizer --offline optimize 6.1200 18.01 \
   --member '6.1200/recitation=OPTION_ID'
 ```
 
 Use `./target/release/hydrant-optimizer` in place of `hydrant-optimizer` unless installed on `PATH`. `cargo install --path . --locked` installs the executable locally. Subject availability depends on the downloaded term. Run `--help` and `manual --help` for the full CLI.
+
+### Terminal controls
+
+| Key | Action |
+|---|---|
+| `/` | Search subjects. Ctrl+U clears the existing query. Type a number/title, then Enter to return to the list. |
+| Up/Down or `k`/`j` | Move through the focused list. Space/Enter toggles a subject. |
+| Tab / Shift+Tab | Cycle Subjects, Manual, Results panels. |
+| `a` / `m` | Add a manual section / focus retained manual entries. |
+| Enter / `x` in Manual | Edit an entry / toggle enabled state. |
+| `o` | Optimize in the background, or cancel an already running search. |
+| `c` | Cancel a running search. No optimum is claimed for cancelled work. |
+| `r`, then `n`/`p` or Right/Left | Focus results and switch an interchangeable actual section. |
+| `e` | Export the chosen sections to `--output`. |
+| `?` / `q` | Help / quit. Escape closes an editor or quits outside it. |
+
+The manual editor's fields are Subject, Component, Section label, Meetings, Room, Start date, End date. Tab/Shift+Tab changes fields, Ctrl+U clears one, Enter or Ctrl+S saves, and Escape cancels. Enter multiple meetings separated by semicolons. Selection survives catalog searches. Selection or manual changes invalidate the previous timetable until re-optimization.
 
 ### Local files
 
@@ -46,7 +63,7 @@ Use `./target/release/hydrant-optimizer` in place of `hydrant-optimizer` unless 
 - `$XDG_DATA_HOME/hydrant-optimizer` takes precedence when set.
 - `--data-dir PATH` overrides the location for all commands.
 - Downloaded cache and versioned `manual.json` are separate. Refreshing never rewrites manual sections.
-- Manual entries are scoped by term, subject, component, and stable option ID. `manual list` works even without a cache. `manual disable ID` and `manual enable ID` control retained entries. `manual add --id ID ...` edits an existing entry.
+- Manual entries are scoped by term, subject, component, and stable option ID. `manual list` works even without a cache. `manual disable ID` and `manual enable ID` control retained entries. `manual add --id ID ...` edits an existing entry, preserving its scope and enabled state. Components can be lecture, recitation, lab, design, or another component published for that subject.
 - For reproducible inputs, `--catalog FILE --term FILE` reads local Hydrant `latest.json` and matching `latestTerm.json` snapshots through the same adapter. These do not overwrite the network cache.
 
 ## Scheduling contract
@@ -73,6 +90,10 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
+
+# Opt-in real public-data and native-terminal acceptance on Unix/macOS.
+cargo test --locked --test live_acceptance -- --ignored --nocapture
+cargo test --locked --test tui_acceptance -- --ignored --nocapture
 ```
 
-The solver is checked against independent exhaustive enumeration. Acceptance requires the **actual executable** to complete subject selection → manual section entry → optimization → same-time member switching → local ICS export. Live fetch/cache, offline behavior, terminal restoration, timezone transitions, and failure cases must be checked separately from synthetic solver fixtures. See [VALIDATION.MD](VALIDATION.MD) for the recorded requirement-to-check mapping when available.
+The solver is checked against independent exhaustive enumeration. Acceptance requires the **actual executable** to complete subject selection → manual section entry → optimization → same-time member switching → local ICS export. Live fetch/cache, offline behavior, terminal restoration, timezone transitions, and failure cases must be checked separately from synthetic solver fixtures. See [VALIDATION.MD](VALIDATION.MD) for observed results, the requirement-to-check mapping, reproduction commands, and remaining limits.

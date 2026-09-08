@@ -1,0 +1,15 @@
+{
+  "lastUpdated": "2026-09-08 22:01",
+  "termInfo": {
+    "urlName": "f26", "startDate": "2026-10-26", "endDate": "2026-11-09",
+    "h1EndDate": "2026-10-30", "h2StartDate": "2026-11-02",
+    "holidayDates": ["2026-11-02"], "mondayScheduleDate": "2026-11-03"
+  },
+  "classes": {
+    "A": {"number":"A","name":"Algorithms","tba":true,"half":false,"sectionKinds":["lecture","recitation"],"lectureSections":[[[[6,2]],"Room A"],[[[6,2]],"Room B"]],"recitationSections":[]},
+    "B": {"number":"B","name":"Biology","tba":false,"half":false,"sectionKinds":["lecture"],"lectureSections":[[[[8,2]],"Room C"]]},
+    "C": {"number":"C","name":"Conflicting class","tba":false,"half":false,"sectionKinds":["lecture"],"lectureSections":[[[[7,2]],"Room D"]]},
+    "P": {"number":"P","name":"Partial term","tba":false,"half":1,"sectionKinds":["lecture"],"lectureSections":[[[[6,2]],"Room P"]]},
+    "E": {"number":"E","name":"","tba":true,"half":false,"sectionKinds":[]}
+  }
+}

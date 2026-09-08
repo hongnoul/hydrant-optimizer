@@ -44,7 +44,10 @@ pub struct Requirement {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Source { Api, Manual }
+pub enum Source {
+    Api,
+    Manual,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SectionOption {
@@ -73,8 +76,10 @@ pub struct Meeting {
 impl Meeting {
     pub fn validate(&self) -> Result<()> {
         ensure!(self.weekday < 7, "weekday must be Monday through Sunday");
-        ensure!(self.start_minute < self.end_minute && self.end_minute <= 1440,
-            "meeting must satisfy 00:00 <= start < end <= 24:00");
+        ensure!(
+            self.start_minute < self.end_minute && self.end_minute <= 1440,
+            "meeting must satisfy 00:00 <= start < end <= 24:00"
+        );
         if let (Some(start), Some(end)) = (self.start_date, self.end_date) {
             ensure!(start <= end, "meeting start date follows end date");
         }
@@ -82,10 +87,16 @@ impl Meeting {
     }
 
     pub fn display(&self) -> String {
-        format!("{} {:02}:{:02}-{:02}:{:02}",
-            ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].get(self.weekday as usize).unwrap_or(&"?"),
-            self.start_minute / 60, self.start_minute % 60,
-            self.end_minute / 60, self.end_minute % 60)
+        format!(
+            "{} {:02}:{:02}-{:02}:{:02}",
+            ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                .get(self.weekday as usize)
+                .unwrap_or(&"?"),
+            self.start_minute / 60,
+            self.start_minute % 60,
+            self.end_minute / 60,
+            self.end_minute % 60
+        )
     }
 }
 
@@ -105,7 +116,11 @@ pub struct Score {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SolveStatus { OptimalKnown, Infeasible, Cancelled }
+pub enum SolveStatus {
+    OptimalKnown,
+    Infeasible,
+    Cancelled,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Solution {
@@ -131,7 +146,12 @@ pub struct ManualStore {
 }
 
 impl Default for ManualStore {
-    fn default() -> Self { Self { version: 1, entries: Vec::new() } }
+    fn default() -> Self {
+        Self {
+            version: 1,
+            entries: Vec::new(),
+        }
+    }
 }
 
 /// Actual member selected after optimization. Switching it must preserve TimeChoice.

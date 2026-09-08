@@ -21,7 +21,7 @@ CLI/TUI subject selection -> equivalent-time grouping -> pure exact optimizer
 | `tui` | Keyboard state machine, selection/editor/result views, solver worker |
 | `main` | CLI options, local-file input, text/JSON output, application startup |
 
-Dependencies: `serde`/`serde_json` for data, `reqwest::blocking` for HTTPS, Ratatui/Crossterm for the terminal, `chrono`/`chrono-tz` for dates, `icalendar` for serialization, `clap` for CLI parsing, `sha2` for content-derived IDs, and `tempfile` for safe file replacement/output. `Cargo.lock` pins the executable's dependency graph.
+Dependencies: `serde`/`serde_json` for data, `reqwest::blocking` for HTTPS, Ratatui/Crossterm for the terminal, `chrono`/`chrono-tz` for dates, `clap` for CLI parsing, `sha2` for content-derived IDs, and `tempfile` for safe file replacement/output. The calendar module emits RFC 5545 text, checked with the independent `icalendar` parser in tests. `Cargo.lock` pins the executable's dependency graph.
 
 ## Sources
 

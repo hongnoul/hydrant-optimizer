@@ -218,6 +218,51 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
         s.contains("never overwritten") || s.contains("already exists")
     });
     assert_eq!(fs::read_to_string(&output).unwrap(), calendar);
+
+    // Exercise review fixes through real keyboard input, not just AppState helpers.
+    ui.send(b"mx");
+    ui.marker("Disabled");
+    let disabled: Value =
+        serde_json::from_slice(&fs::read(dir.join("manual.json")).unwrap()).unwrap();
+    assert_eq!(disabled["entries"][0]["enabled"], false);
+    ui.send(b"e");
+    ui.marker("optimize before exporting");
+    assert_eq!(fs::read_to_string(&output).unwrap(), calendar);
+
+    ui.send(b"\r");
+    ui.marker("Edit manual entry");
+    ui.send(b"\t\t\x15Edited while disabled\r");
+    ui.marker("Manual entries saved. Press o to re-optimize.");
+    let saved_bytes = fs::read(dir.join("manual.json")).unwrap();
+    let edited: Value = serde_json::from_slice(&saved_bytes).unwrap();
+    assert_eq!(edited["entries"][0]["enabled"], false);
+    assert_eq!(
+        edited["entries"][0]["option"]["label"],
+        "Edited while disabled"
+    );
+    assert_eq!(
+        edited["entries"][0]["option"]["id"],
+        stored["entries"][0]["option"]["id"]
+    );
+
+    ui.send(b"\r");
+    ui.marker("Edit manual entry");
+    ui.send(b"\x1518.01\r");
+    ui.marker("manual edits cannot move");
+    assert_eq!(fs::read(dir.join("manual.json")).unwrap(), saved_bytes);
+    ui.send(b"\x1b");
+    ui.until("editor cancelled", |screen| {
+        !screen.contains("Edit manual entry")
+    });
+    ui.send(b"x");
+    ui.marker("Enabled");
+    ui.send(b"o");
+    ui.marker(&expected);
+
+    ui.send(b"/\x15mathematics for\r");
+    ui.marker("mathematics for");
+    assert!(ui.screen.screen().contents().contains("selected 2"));
+    assert_eq!(fs::read_to_string(&output).unwrap(), calendar);
     ui.send(b"q");
     ui.marker("TERMINAL_RESTORED");
     assert!(ui.child.wait().unwrap().success());
@@ -227,7 +272,7 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
             .any(|w| w == b"\x1b[?1049l")
     );
     println!(
-        "TUI_ACCEPTANCE subjects=2 selection_across_search=true manual_editor=true exact_score={} member_switch=true events={events} no_clobber=true termios_restored=true alternate_screen_restored=true",
+        "TUI_ACCEPTANCE subjects=2 selection_across_search=true multiword_search=true manual_editor=true disabled_edit_preserved=true scope_move_rejected=true stale_export_rejected=true reoptimization=true exact_score={} member_switch=true events={events} no_clobber=true termios_restored=true alternate_screen_restored=true",
         reference["solution"]["score"]
     );
 }

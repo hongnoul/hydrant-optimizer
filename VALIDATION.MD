@@ -30,6 +30,21 @@ That is **42 passing tests including the three opt-in checks**, plus release bui
 | Correct dated calendar expansion | `data_calendar` checks semester limits, holidays, alternate weekdays, New York DST offsets, deterministic UIDs, explicit omissions, next-day midnight, UTF-8 75-octet folding, CR/LF escaping, duplicate events, and invalid calendars. Ambiguous/nonexistent local times are rejected. Independent `icalendar` parsing passed. |
 | Output and terminal safety | Existing ICS content remains byte-identical after CLI/TUI overwrite attempts. Invalid member or missing calendar creates no output. Live PTY verifies a failed export remains recoverable and normal exit restores termios/alternate screen. |
 
+### Native acceptance follow-up
+
+A follow-up audit exercised the review fixes through the **actual release executable**, live Hydrant data, real PTY keyboard events, and persisted output files. These are additional assertions within `actual_tui_live_selection_editor_solver_member_switch_export_and_restore`, not replacement state-machine fixtures.
+
+| Public behavior | Action and observed result |
+|---|---|
+| Multiword title search preserves selection | Typed `mathematics for` into the actual search field. The complete query appeared, including its space, and the displayed selected-subject count remained **2**. |
+| Disabling invalidates the previous timetable | Disabled the manual entry and attempted export. The UI reported **optimize before exporting**. The existing ICS remained byte-identical. |
+| Editing does not silently re-enable a section | Opened the disabled entry's editor, changed its label, and saved. `manual.json` contained the revised label, the same option ID, and `enabled: false`. |
+| Editing cannot move an entry to another subject | Changed the existing entry's subject to `18.01` and attempted save. The UI reported **manual edits cannot move**. Persisted manual data remained byte-identical to the last valid save. |
+| Validation errors are recoverable | Cancelled the rejected edit, explicitly enabled the entry, and optimized again. The UI returned to **5 occupied days, 60 gap minutes**. |
+| Exit remains safe after the extended workflow | Quit after all those actions. The child exited successfully, the original termios settings matched, and the alternate-screen leave sequence was observed. |
+
+All six observations passed in the same live session that selected the subjects, saved an atomic manual bundle, switched an actual same-time member, and exported **113 events**. The audit did not require further application changes, only stronger direct acceptance assertions for the earlier fixes.
+
 ## Reproduce
 
 ```sh

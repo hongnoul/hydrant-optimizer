@@ -51,10 +51,14 @@ Use `./target/release/hydrant-optimizer` in place of `hydrant-optimizer` unless 
 | `o` | Optimize in the background, or cancel an already running search. |
 | `c` | Cancel a running search. No optimum is claimed for cancelled work. |
 | `r`, then `n`/`p` or Right/Left | Focus results and switch an interchangeable actual section. |
+| PgUp/PgDn in Results | Scroll the timetable, section picker, notices, and export details. |
+| Home/End in Results | Jump to the first/last result line. Up/Down selects a section and keeps it visible. |
 | `e` | Export the chosen sections to `--output`. |
 | `?` / `q` | Help / quit. Escape closes an editor or quits outside it. |
 
 The manual editor's fields are Subject, Component, Section label, Meetings, Room, Start date, End date. Tab/Shift+Tab changes fields, Ctrl+U clears one, Enter or Ctrl+S saves, and Escape cancels. Enter multiple meetings separated by semicolons. Selection survives catalog searches. Selection or manual changes invalidate the previous timetable until re-optimization.
+
+Results are scrollable at **80×24**, including all unresolved-time, source/cache, and export notices. The results heading shows the notice count, and the bottom border shows the scroll position. Long action messages and output paths remain available in the scrollable view.
 
 ### Local files
 
@@ -74,6 +78,7 @@ The manual editor's fields are Subject, Component, Section label, Meetings, Room
 - Manual sections use the same normalized model as published sections. Alternative sections may contain several meetings. Keep known components when supplying TBA information.
 - Show selected sections, timetable, score, unresolved-time notices, and explicit infeasibility. An interrupted search never claims optimality.
 - Export only selected, known, supported meetings. Calendar export uses `America/New_York`, semester bounds, holidays and alternate-weekday dates. Existing output files are protected.
+- Infeasible CLI optimization returns explicit text/JSON and exit code **2**, including with `--export`. No calendar is created or modified for an infeasible result.
 
 ## Boundaries
 

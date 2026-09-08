@@ -1,5 +1,5 @@
-//! Opt-in native-terminal acceptance of the actual executable against live data.
-//! Run: cargo test --test tui_acceptance -- --ignored --nocapture
+//! Native-terminal acceptance of the actual executable. Offline cases run by default.
+//! Live case: cargo test --test tui_acceptance -- --ignored --nocapture
 #![cfg(unix)]
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -24,10 +24,14 @@ struct Driver {
 }
 impl Driver {
     fn new(dir: &Path, output: &Path) -> Self {
+        Self::with_size(dir, output, 55, 170, &[])
+    }
+
+    fn with_size(dir: &Path, output: &Path, rows: u16, cols: u16, args: &[&str]) -> Self {
         let pair = native_pty_system()
             .openpty(PtySize {
-                rows: 55,
-                cols: 170,
+                rows,
+                cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -35,6 +39,7 @@ impl Driver {
         // Inspect the real slave's termios before and after the app exits.
         let mut cmd = CommandBuilder::new("/bin/sh");
         cmd.args(["-c", "before=$(stty -g); \"$@\"; code=$?; after=$(stty -g); if [ \"$before\" = \"$after\" ]; then printf '\nTERMINAL_RESTORED\n'; else printf '\nTERMINAL_NOT_RESTORED\n'; exit 99; fi; exit \"$code\"", "--",env!("CARGO_BIN_EXE_hydrant-optimizer"),"--offline","--data-dir",dir.to_str().unwrap(),"--output",output.to_str().unwrap()]);
+        cmd.args(args);
         cmd.env("TERM", "xterm-256color");
         let child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
@@ -54,7 +59,7 @@ impl Driver {
             _master: pair.master,
             writer,
             output: receive,
-            screen: vt100::Parser::new(55, 170, 1000),
+            screen: vt100::Parser::new(rows, cols, 1000),
             raw: Vec::new(),
         }
     }
@@ -107,6 +112,85 @@ fn cli(dir: &Path, args: &[&str]) -> Value {
         String::from_utf8_lossy(&out.stderr)
     );
     serde_json::from_slice(&out.stdout).unwrap()
+}
+
+#[test]
+fn actual_tui_80x24_reaches_members_all_notices_and_exports() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    let mut catalog: Value = serde_json::from_str(include_str!("fixtures/catalog.json")).unwrap();
+    // More notices than the old six-notice cap, through the real adapter and solver.
+    for i in 0..10 {
+        let id = format!("U{i}");
+        catalog["classes"][&id] = serde_json::json!({
+            "number": id, "name": "Unannounced meetings", "sectionKinds": []
+        });
+    }
+    let catalog_path = dir.join("catalog.json");
+    fs::write(&catalog_path, catalog.to_string()).unwrap();
+    let term_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/term.json");
+    let mut args = vec![
+        "--catalog",
+        catalog_path.to_str().unwrap(),
+        "--term",
+        term_path,
+        "tui",
+        "--select",
+        "A",
+        "--select",
+        "B",
+    ];
+    let unknowns = (0..10).map(|i| format!("U{i}")).collect::<Vec<_>>();
+    for id in &unknowns {
+        args.extend(["--select", id.as_str()]);
+    }
+    let output = dir.join("small.ics");
+    let mut ui = Driver::with_size(dir, &output, 24, 80, &args);
+    ui.marker("Preselected 12 subject(s)");
+    ui.send(b"?");
+    ui.marker("Home/End first/last result line");
+    ui.marker("PgUp/PgDn");
+    ui.marker("scroll results");
+    ui.send(b"?");
+    ui.send(b"o");
+    ui.marker("Optimal: 1 occupied day(s), 0 gap minute(s).");
+    ui.send(b"r");
+    ui.marker("> A/lecture:");
+    ui.send(b"n");
+    ui.marker("(2/2)");
+    ui.send(b"\x1b[B");
+    ui.marker("> B/lecture:");
+    ui.send(b"\x1b[A");
+    ui.marker("> A/lecture:");
+    ui.send(b"\x1b[F"); // End must expose the final notice, not a truncated subset.
+    ui.marker("U9: no known meeting components");
+    ui.send(b"\x1b[H");
+    ui.marker("Timetable");
+    ui.send(b"\x1b[6~"); // PageDown scrolls content, not the selected component.
+    ui.until("paged results", |s| !s.contains("Status: OptimalKnown"));
+    ui.send(b"\x1b[5~");
+    ui.marker("Status: OptimalKnown");
+    ui.send(b"e");
+    ui.marker("Exported");
+    ui.send(b"\x1b[F");
+    ui.until("last wrapped export notice", |s| {
+        s.contains("Export notice: U9: no known meeting") && s.contains("components")
+    });
+    let text = fs::read_to_string(&output).unwrap();
+    let parsed: icalendar::Calendar = text.parse().unwrap();
+    assert_eq!(parsed.events().count(), 6);
+    assert!(
+        text.contains("LOCATION:Room A"),
+        "switched member must reach export"
+    );
+    ui.send(b"q");
+    ui.marker("TERMINAL_RESTORED");
+    assert!(ui.child.wait().unwrap().success());
+    assert!(
+        ui.raw
+            .windows(b"\x1b[?1049l".len())
+            .any(|w| w == b"\x1b[?1049l")
+    );
 }
 
 #[test]

@@ -32,7 +32,7 @@ use ratatui::{
 
 use crate::{app, model::*, storage};
 
-pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, Up/Down move, Space select subject, Tab next panel/field, m manual, a add manual, Enter edit/toggle, x enable-disable manual, o optimize/cancel, c cancel, n/p or Left/Right switch same-time member, e export, ? help, Ctrl+S save editor";
+pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, Up/Down move, Space select subject, Tab next panel/field, m manual, a add manual, Enter edit/toggle, x enable-disable manual, o optimize/cancel, c cancel, r results, PgUp/PgDn scroll results, Home/End first/last result line, n/p or Left/Right switch same-time member, e export, ? help, Ctrl+S save editor";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
@@ -184,6 +184,24 @@ pub enum AppAction {
     ToggleManualEnabled,
 }
 
+#[derive(Debug, Default)]
+struct ResultViewport {
+    offset: u16,
+    max_offset: u16,
+    height: u16,
+    reveal_member: bool,
+}
+
+impl ResultViewport {
+    fn page(&mut self, direction: isize) {
+        let step = self.height.saturating_sub(1).max(1) as isize;
+        self.offset = (self.offset as usize)
+            .saturating_add_signed(direction * step)
+            .min(self.max_offset as usize) as u16;
+        self.reveal_member = false;
+    }
+}
+
 #[derive(Debug)]
 pub struct AppState {
     base: Dataset,
@@ -198,6 +216,7 @@ pub struct AppState {
     pub focus: Focus,
     pub manual_cursor: usize,
     pub result_cursor: usize,
+    result_viewport: ResultViewport,
     pub editor: Option<ManualForm>,
     pub solution: Option<Solution>,
     pub actual_members: BTreeMap<String, String>,
@@ -246,6 +265,7 @@ impl AppState {
             focus: Focus::Subjects,
             manual_cursor: 0,
             result_cursor: 0,
+            result_viewport: ResultViewport::default(),
             editor: None,
             solution: None,
             actual_members: BTreeMap::new(),
@@ -352,11 +372,28 @@ impl AppState {
                 Ok(AppAction::None)
             }
             KeyCode::PageUp => {
-                self.move_cursor(-10);
+                if self.focus == Focus::Results {
+                    self.result_viewport.page(-1);
+                } else {
+                    self.move_cursor(-10);
+                }
                 Ok(AppAction::None)
             }
             KeyCode::PageDown => {
-                self.move_cursor(10);
+                if self.focus == Focus::Results {
+                    self.result_viewport.page(1);
+                } else {
+                    self.move_cursor(10);
+                }
+                Ok(AppAction::None)
+            }
+            KeyCode::Home | KeyCode::End if self.focus == Focus::Results => {
+                self.result_viewport.offset = if key.code == KeyCode::Home {
+                    0
+                } else {
+                    self.result_viewport.max_offset
+                };
+                self.result_viewport.reveal_member = false;
                 Ok(AppAction::None)
             }
             KeyCode::Char(' ') => {
@@ -389,6 +426,7 @@ impl AppState {
             }
             KeyCode::Char('r') => {
                 self.focus = Focus::Results;
+                self.result_viewport.reveal_member = true;
                 Ok(AppAction::None)
             }
             KeyCode::Char('a') => {
@@ -526,6 +564,9 @@ impl AppState {
             (index + 1) % order.len()
         };
         self.focus = order[next];
+        if self.focus == Focus::Results {
+            self.result_viewport.reveal_member = true;
+        }
     }
 
     fn move_cursor(&mut self, delta: isize) {
@@ -538,7 +579,8 @@ impl AppState {
                     moved_index(self.manual_cursor, self.manual_visible_len(), delta)
             }
             Focus::Results => {
-                self.result_cursor = moved_index(self.result_cursor, self.result_len(), delta)
+                self.result_cursor = moved_index(self.result_cursor, self.result_len(), delta);
+                self.result_viewport.reveal_member = true;
             }
         }
     }
@@ -691,6 +733,7 @@ impl AppState {
 
     pub fn install_solution(&mut self, solution: Solution) {
         self.result_cursor = 0;
+        self.result_viewport = ResultViewport::default();
         self.actual_members.clear();
         self.export = None;
         self.optimize_running = false;
@@ -713,6 +756,7 @@ impl AppState {
     }
 
     pub fn cycle_current_member(&mut self, delta: isize) {
+        self.result_viewport.reveal_member = true;
         let Some(solution) = &self.solution else {
             return;
         };
@@ -770,6 +814,7 @@ impl AppState {
 
     fn invalidate(&mut self, message: &str) {
         self.generation = self.generation.wrapping_add(1);
+        self.result_viewport = ResultViewport::default();
         self.solution = None;
         self.actual_members.clear();
         self.export = None;
@@ -871,7 +916,7 @@ pub fn run(
 
     loop {
         drain_worker(&mut app, &mut worker);
-        terminal.terminal.draw(|frame| draw(frame, &app))?;
+        terminal.terminal.draw(|frame| draw(frame, &mut app))?;
         if app.should_quit {
             break;
         }
@@ -951,6 +996,7 @@ fn start_worker(app: &mut AppState, worker: &mut Option<OptimizeWorker>) {
     ));
     app.optimize_running = true;
     app.solution = None;
+    app.result_viewport = ResultViewport::default();
     app.export = None;
     app.status = "Optimizing in background. Press o or c to cancel.".to_string();
 }
@@ -988,7 +1034,7 @@ fn drain_worker(app: &mut AppState, worker: &mut Option<OptimizeWorker>) {
     }
 }
 
-fn draw(frame: &mut Frame<'_>, app: &AppState) {
+fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1152,8 +1198,12 @@ fn draw_manual(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     );
 }
 
-fn draw_results(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
-    let mut lines = Vec::new();
+fn result_lines(app: &AppState) -> (Vec<Line<'static>>, Option<usize>, usize) {
+    // The compact footer may clip long errors/paths. Their complete text belongs
+    // in this scrollable view as well, including before the first optimization.
+    let mut lines = vec![Line::from(format!("Action: {}", app.status))];
+    let mut member_line = None;
+    let mut notice_count = 0;
     if app.optimize_running {
         lines.push(Line::from(Span::styled(
             "Optimizing in background. Press o or c to cancel.",
@@ -1192,6 +1242,9 @@ fn draw_results(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
                 Style::default().add_modifier(Modifier::BOLD),
             )));
             for (index, choice) in solution.choices.iter().enumerate() {
+                if index == app.result_cursor {
+                    member_line = Some(lines.len());
+                }
                 let marker = if index == app.result_cursor { ">" } else { " " };
                 let current = current_member(choice, &app.actual_members);
                 let suffix = if choice.members.len() > 1 {
@@ -1216,10 +1269,18 @@ fn draw_results(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
                 } else {
                     format!("{marker} {}: no members", choice.requirement_id)
                 };
-                lines.push(Line::from(text));
+                lines.push(Line::from(Span::styled(
+                    text,
+                    if index == app.result_cursor {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default()
+                    },
+                )));
             }
         }
         if !solution.unresolved.is_empty() {
+            notice_count += solution.unresolved.len();
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "Notices",
@@ -1229,32 +1290,42 @@ fn draw_results(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
                 solution
                     .unresolved
                     .iter()
-                    .take(6)
                     .map(|notice| Line::from(format!("- {notice}"))),
             );
-            if solution.unresolved.len() > 6 {
-                lines.push(Line::from(format!(
-                    "... {} more",
-                    solution.unresolved.len() - 6
-                )));
-            }
         }
     } else if !app.optimize_running {
         lines.push(Line::from(
             "No current result. Select subjects and press o.",
         ));
     }
+    if app.solution.is_none() && !app.dataset.notices.is_empty() {
+        notice_count += app.dataset.notices.len();
+        lines.push(Line::from("Notices"));
+        lines.extend(
+            app.dataset
+                .notices
+                .iter()
+                .map(|notice| Line::from(format!("- {notice}"))),
+        );
+    }
+    lines.push(Line::from(format!("Output: {}", app.output.display())));
     if let Some(export) = &app.export {
+        notice_count += export.notices.len();
         lines.push(Line::from(""));
         lines.push(Line::from(format!(
             "Exported {} event(s) to {}",
             export.event_count,
             export.path.display()
         )));
-        for notice in export.notices.iter().take(3) {
+        for notice in &export.notices {
             lines.push(Line::from(format!("Export notice: {notice}")));
         }
     }
+    (lines, member_line, notice_count)
+}
+
+fn draw_results(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
+    let (lines, member_line, notice_count) = result_lines(app);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(if app.focus == Focus::Results {
@@ -1262,43 +1333,64 @@ fn draw_results(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
         } else {
             Style::default()
         })
-        .title("Result, timetable, notices");
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+        .title(format!("Results | {notice_count} notices"));
+    let inner = block.inner(area);
+    let paragraph = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
+    // Ask Ratatui for the same Unicode/word wrapping used to render. Counting
+    // source lines or bytes would skip content or lose the selected member.
+    let content_height = paragraph.line_count(inner.width).min(u16::MAX as usize) as u16;
+    let viewport = &mut app.result_viewport;
+    viewport.height = inner.height;
+    viewport.max_offset = content_height.saturating_sub(inner.height);
+    viewport.offset = viewport.offset.min(viewport.max_offset);
+    if viewport.reveal_member && inner.width > 0 && inner.height > 0 {
+        if let Some(index) = member_line {
+            let top = Paragraph::new(lines[..index].to_vec())
+                .wrap(Wrap { trim: false })
+                .line_count(inner.width)
+                .min(u16::MAX as usize) as u16;
+            let height = Paragraph::new(lines[index].clone())
+                .wrap(Wrap { trim: false })
+                .line_count(inner.width)
+                .min(u16::MAX as usize) as u16;
+            if top < viewport.offset || height > inner.height {
+                viewport.offset = top;
+            } else if top.saturating_add(height) > viewport.offset.saturating_add(inner.height) {
+                viewport.offset = top.saturating_add(height).saturating_sub(inner.height);
+            }
+            viewport.offset = viewport.offset.min(viewport.max_offset);
+        }
+        viewport.reveal_member = false;
+    }
+    let block = block.title_bottom(format!(
+        " PgUp/Dn | {}/{} ",
+        viewport.offset, viewport.max_offset
+    ));
+    frame.render_widget(paragraph.block(block).scroll((viewport.offset, 0)), area);
 }
 
 fn draw_footer(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
-    let notices = app
-        .dataset
-        .notices
-        .iter()
-        .take(2)
-        .map(|notice| format!("Notice: {notice}"))
-        .collect::<Vec<_>>()
-        .join(" | ");
     let text = vec![
         Line::from(app.status.clone()),
-        Line::from(KEYMAP),
-        Line::from(if notices.is_empty() {
-            format!("Output: {}", app.output.display())
+        Line::from("/ search  Space select  a add  o optimize  r results  e export  ? help"),
+        Line::from(if app.focus == Focus::Results {
+            "PgUp/PgDn scroll | Home/End ends | Up/Down section | n/p member"
         } else {
-            format!("Output: {} | {notices}", app.output.display())
+            "Tab panels | m manual | x enable/disable | q quit"
         }),
     ];
     frame.render_widget(
-        Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(text).block(Block::default().borders(Borders::ALL)),
         area,
     );
 }
 
 fn draw_help(frame: &mut Frame<'_>, area: Rect) {
-    let popup = centered_rect(76, 54, area);
+    let popup = if area.width < 100 || area.height < 32 {
+        area
+    } else {
+        centered_rect(76, 54, area)
+    };
     frame.render_widget(Clear, popup);
     let help = vec![
         Line::from(Span::styled(
@@ -1491,5 +1583,161 @@ fn common_date(meetings: &[Meeting], start: bool) -> Option<String> {
         Some(first.to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod viewport_tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+
+    fn fixture_state(dir: &std::path::Path) -> AppState {
+        let dataset = crate::adapter::parse_catalog(
+            include_str!("../tests/fixtures/catalog.json"),
+            include_str!("../tests/fixtures/term.json"),
+        )
+        .unwrap();
+        let selected = vec!["A".to_string(), "B".to_string()];
+        let mut solution = app::optimize(&dataset, &selected, None).unwrap();
+        for i in 0..12 {
+            solution
+                .unresolved
+                .push(format!("Notice {i:02}: unannounced meeting"));
+        }
+        let mut state = AppState::new(
+            dataset,
+            ManualStore::default(),
+            dir.into(),
+            dir.join("out.ics"),
+            selected,
+        )
+        .unwrap();
+        state.install_solution(solution);
+        state
+    }
+
+    fn render(state: &mut AppState, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| draw(frame, state)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    fn press(state: &mut AppState, code: KeyCode) {
+        state
+            .handle_key(KeyEvent::new(code, KeyModifiers::NONE))
+            .unwrap();
+    }
+
+    #[test]
+    fn result_pages_and_member_navigation_keep_independent_positions() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        render(&mut state, 80, 24);
+        press(&mut state, KeyCode::Char('r'));
+        assert!(render(&mut state, 80, 24).contains("> A/lecture:"));
+        let cursor = state.result_cursor;
+        press(&mut state, KeyCode::PageDown);
+        let offset = state.result_viewport.offset;
+        assert!(offset > 0);
+        assert_eq!(state.result_cursor, cursor);
+        render(&mut state, 80, 24);
+        assert_eq!(
+            state.result_viewport.offset, offset,
+            "render must not undo deliberate scrolling"
+        );
+        press(&mut state, KeyCode::End);
+        assert!(render(&mut state, 80, 24).contains("Notice 11:"));
+        assert_eq!(
+            state.result_viewport.offset,
+            state.result_viewport.max_offset
+        );
+        press(&mut state, KeyCode::PageDown);
+        assert_eq!(
+            state.result_viewport.offset,
+            state.result_viewport.max_offset
+        );
+        press(&mut state, KeyCode::Down);
+        assert!(render(&mut state, 80, 24).contains("> B/lecture:"));
+        press(&mut state, KeyCode::Up);
+        press(&mut state, KeyCode::Char('n'));
+        assert!(render(&mut state, 80, 24).contains("(2/2)"));
+        press(&mut state, KeyCode::Home);
+        press(&mut state, KeyCode::PageUp);
+        assert_eq!(state.result_viewport.offset, 0);
+        assert!(render(&mut state, 80, 24).contains("Status: OptimalKnown"));
+    }
+
+    #[test]
+    fn result_wrapping_resize_and_invalidation_clamp_scroll() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        // Exercise the real Unicode/word wrapper, not byte-length estimates.
+        state.solution.as_mut().unwrap().choices[0].members[0].label = "界α section ".repeat(20);
+        render(&mut state, 80, 24);
+        press(&mut state, KeyCode::Char('r'));
+        assert!(render(&mut state, 80, 24).contains("> A/lecture:"));
+        press(&mut state, KeyCode::End);
+        assert!(render(&mut state, 80, 24).contains("Notice 11:"));
+        assert!(state.result_viewport.offset > 0);
+        render(&mut state, 200, 160);
+        assert_eq!(state.result_viewport.offset, 0);
+        assert_eq!(state.result_viewport.max_offset, 0);
+        render(&mut state, 80, 24);
+        press(&mut state, KeyCode::End);
+        state.focus = Focus::Subjects;
+        state.toggle_current_subject();
+        assert_eq!(state.result_viewport.offset, 0);
+        assert_eq!(state.result_viewport.max_offset, 0);
+        assert!(state.solution.is_none());
+        assert!(render(&mut state, 80, 24).contains("No current result."));
+    }
+
+    #[test]
+    fn source_and_export_notices_are_uncapped_and_reachable() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        state.solution = None;
+        state.dataset.notices = (0..12).map(|i| format!("Source notice {i:02}")).collect();
+        state.focus = Focus::Results;
+        render(&mut state, 80, 24);
+        press(&mut state, KeyCode::End);
+        assert!(render(&mut state, 80, 24).contains("Source notice 11"));
+        state.export = Some(ExportSummary {
+            path: state.output.clone(),
+            event_count: 0,
+            notices: (0..12).map(|i| format!("Omitted section {i:02}")).collect(),
+        });
+        render(&mut state, 80, 24);
+        press(&mut state, KeyCode::End);
+        assert!(render(&mut state, 80, 24).contains("Export notice: Omitted section 11"));
+        assert_eq!(result_lines(&state).2, 24);
+        state.status = format!("{}STATUS_END", "Long action message ".repeat(20));
+        state.output = temp
+            .path()
+            .join(format!("{}output.ics", "long directory ".repeat(20)));
+        press(&mut state, KeyCode::Home);
+        let mut pages = String::new();
+        loop {
+            let screen = render(&mut state, 80, 24);
+            assert!(screen.contains("Results | 24 notices"));
+            assert!(screen.contains("PgUp/Dn |"));
+            pages.push_str(&screen);
+            if state.result_viewport.offset == state.result_viewport.max_offset {
+                break;
+            }
+            press(&mut state, KeyCode::PageDown);
+        }
+        assert!(pages.contains("STATUS_END"));
+        assert!(pages.contains("output.ics"));
+        for i in 0..12 {
+            assert!(pages.contains(&format!("Source notice {i:02}")));
+            assert!(pages.contains(&format!("Omitted section {i:02}")));
+        }
     }
 }

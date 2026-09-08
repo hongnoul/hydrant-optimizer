@@ -78,6 +78,8 @@ The TUI owns selection IDs, search text, editor state, chosen result members, an
 
 Terminal setup has restoration guards for normal exit, errors, and panics. The interface provides catalog selection, manual entry management, score/timetable, unresolved notices, actual same-time member switching, explicit infeasibility, and local export.
 
+The results viewport tracks wrapped-row offset separately from the selected section. PgUp/PgDn and Home/End scroll content without changing section selection. Section navigation reveals the selected row. Ratatui's rendered-line measurement accounts for word/Unicode wrapping and clamps offsets after resizing. All notices, action messages, and output paths are retained in the scrollable view. Result invalidation resets the viewport.
+
 ## Calendar and output safety
 
 Expand each selected actual section into dated occurrences within reliable term/meeting bounds. Apply holidays and alternate-weekday substitutions before timezone conversion. Interpret wall-clock times in `America/New_York`, then serialize each occurrence in UTC. This preserves 09:00 classes across DST rather than repeating a fixed UTC hour.
@@ -85,3 +87,5 @@ Expand each selected actual section into dated occurrences within reliable term/
 Reject or disclose ambiguous/nonexistent local times, missing calendar bounds, and unsupported sections. Export known supported meetings and surface omissions. Include stable event UIDs and escaped labels/rooms. Do not claim that successful serialization alone proves calendar-client interoperability.
 
 Write output atomically and never overwrite an existing file. Export does not mutate a user's calendar account. Release artifacts are native executables per target; only platforms actually built and exercised are claimed as verified.
+
+CLI `--export` invokes calendar writing only for a completed feasible result. Infeasible optimization retains its explicit text/JSON, unresolved notices, and exit code 2 without touching the output path.

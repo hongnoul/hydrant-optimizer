@@ -238,7 +238,9 @@ fn run(cli: Cli) -> Result<u8> {
             } else {
                 Vec::new()
             };
-            let report = if export {
+            // Infeasibility is a solver outcome, even when export was requested.
+            // Preserve its text/JSON and exit status without touching the output path.
+            let report = if export && solution.status == SolveStatus::OptimalKnown {
                 Some(app::write_calendar(
                     &dataset,
                     &solution,

@@ -243,6 +243,56 @@ fn actual_cli_failure_statuses_and_unknown_time_disclosures() {
 }
 
 #[test]
+fn infeasible_export_preserves_status_and_never_touches_output() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("infeasible.ics");
+    for existing in [false, true] {
+        if existing {
+            fs::write(&path, "existing calendar must survive").unwrap();
+        }
+        for json in [false, true] {
+            let mut args = vec![
+                "--output",
+                path.to_str().unwrap(),
+                "optimize",
+                "A",
+                "C",
+                "--export",
+            ];
+            if json {
+                args.push("--json");
+            }
+            let output = invoke(temp.path(), &args);
+            assert_eq!(output.status.code(), Some(2), "{:?}", output);
+            if json {
+                let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(result["solution"]["status"], "infeasible");
+                assert!(result["solution"]["score"].is_null());
+                assert!(result["sections"].as_array().unwrap().is_empty());
+                assert!(result["export"].is_null());
+                assert!(
+                    !result["solution"]["unresolved"]
+                        .as_array()
+                        .unwrap()
+                        .is_empty()
+                );
+            } else {
+                assert!(String::from_utf8_lossy(&output.stdout).contains("Infeasible:"));
+                assert!(String::from_utf8_lossy(&output.stderr).contains("recitation"));
+            }
+            if existing {
+                assert_eq!(
+                    fs::read_to_string(&path).unwrap(),
+                    "existing calendar must survive"
+                );
+            } else {
+                assert!(!path.exists());
+            }
+        }
+    }
+}
+
+#[test]
 fn dated_manual_options_remain_visible_but_do_not_enter_weekly_search() {
     let temp = TempDir::new().unwrap();
     let dir = temp.path();

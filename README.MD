@@ -90,6 +90,8 @@ No registration, seats, degree planning, PE planning, travel objective, or cloud
 
 ## Verification
 
+Run `bash scripts/verify-mvp.sh` for the local suite, release regressions, and an isolated installed-binary smoke test. Add `--live` to fetch a fresh Hydrant cache, run all three opt-in checks, and export with the installed binary using live data. This requires Bash and Rust development tools, not Python or a verification service. It never replaces your normal installation or touches calendar accounts. Logs, isolated data, and calendars are retained in a unique directory under `HYDRANT_VERIFY_DIR`, then `JCODE_SCRATCH_DIR` if set, otherwise `target/verification`. The final line prints that directory. Live subjects and the snapshot assertions currently target **f26**.
+
 ```sh
 cargo fmt --check
 cargo test --locked

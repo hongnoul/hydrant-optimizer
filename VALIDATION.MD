@@ -66,6 +66,10 @@ Both new actual-executable regressions first failed against the previous impleme
 
 ## Reproduce
 
+The repository includes `bash scripts/verify-mvp.sh --live` to run build/lint, all tests, fresh-cache snapshot acceptance, real CLI/PTY workflows, and an isolated installed-binary export without session-specific paths. Without `--live`, public-data checks are skipped explicitly and local fixture/PTY/install checks still run. It retains stdout/stderr, exit-code records, isolated cache, and exported calendars, reporting the evidence directory on success or failure. Rust dependency downloads may still require network access when not cached. Existing manual snapshot commands below remain supported.
+
+Handoff checks passed with macOS `/bin/bash` in both local and live modes, including an evidence path containing spaces. The installed fixture workflow produced **6 events**, the live workflow **113 events**, and infeasible text/JSON exports preserved existing bytes and created no missing output. Help exited 0 and malformed arguments exited 2 without creating artifacts. An injected Cargo failure stopped the runner with exit 1 before installation, retaining the underlying exit 77 and its diagnostics. Evidence includes start time and Git revision/worktree status when Git is available. These runner checks supplement the 47 Rust tests, not replace them.
+
 ```sh
 cargo fmt --check
 cargo test --locked

@@ -95,15 +95,20 @@ fn adapter_parses_fixture_calendar_blank_titles_partials_and_deduplicates_exact_
 }
 
 #[test]
-#[ignore = "requires HYDRANT_REAL_CATALOG and HYDRANT_REAL_TERM paths to an f26 snapshot"]
+#[ignore = "requires f26 snapshot paths or HYDRANT_REAL_DATA_DIR with a fetched cache"]
 fn real_f26_catalog_snapshot_parses_when_available() {
-    let catalog_path = std::env::var_os("HYDRANT_REAL_CATALOG").expect("set HYDRANT_REAL_CATALOG");
-    let term_path = std::env::var_os("HYDRANT_REAL_TERM").expect("set HYDRANT_REAL_TERM");
-    let dataset = adapter::parse_catalog(
-        &fs::read_to_string(catalog_path).unwrap(),
-        &fs::read_to_string(term_path).unwrap(),
-    )
-    .unwrap();
+    let dataset = if let Some(dir) = std::env::var_os("HYDRANT_REAL_DATA_DIR") {
+        storage::load_dataset(std::path::Path::new(&dir), true).unwrap()
+    } else {
+        let catalog_path =
+            std::env::var_os("HYDRANT_REAL_CATALOG").expect("set HYDRANT_REAL_CATALOG");
+        let term_path = std::env::var_os("HYDRANT_REAL_TERM").expect("set HYDRANT_REAL_TERM");
+        adapter::parse_catalog(
+            &fs::read_to_string(catalog_path).unwrap(),
+            &fs::read_to_string(term_path).unwrap(),
+        )
+        .unwrap()
+    };
     assert_eq!(dataset.term_id, "f26");
     assert!(dataset.courses.len() >= 2_000);
     assert_eq!(

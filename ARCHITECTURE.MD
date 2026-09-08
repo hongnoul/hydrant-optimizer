@@ -1,0 +1,87 @@
+# Architecture
+
+## Rust implementation
+
+One Cargo package provides a reusable library and the `hydrant-optimizer` executable. No Python process, FFI boundary, database server, web service, or general-purpose optimization framework is needed.
+
+```text
+Hydrant JSON -> adapter + separate local manual overlays -> normalized Dataset
+CLI/TUI subject selection -> equivalent-time grouping -> pure exact optimizer
+                         -> timetable + actual-section picker -> local ICS
+```
+
+| Module | Responsibility |
+|---|---|
+| `model` | Owned, serializable domain records, explicit statuses, interval validation |
+| `adapter` | Hydrant raw JSON and calendar metadata -> normalized dataset |
+| `storage` | Public HTTP fetching, validated cache, independent manual records, merge |
+| `optimizer` | Canonical grouping, minute-bitset search, deterministic exact result |
+| `calendar` | Dated event expansion, holidays/alternate weekdays, New York timezone, ICS |
+| `app` | Shared CLI/TUI orchestration, actual-member resolution, safe export |
+| `tui` | Keyboard state machine, selection/editor/result views, solver worker |
+| `main` | CLI options, local-file input, text/JSON output, application startup |
+
+Dependencies: `serde`/`serde_json` for data, `reqwest::blocking` for HTTPS, Ratatui/Crossterm for the terminal, `chrono`/`chrono-tz` for dates, `icalendar` for serialization, `clap` for CLI parsing, `sha2` for content-derived IDs, and `tempfile` for safe file replacement/output. `Cargo.lock` pins the executable's dependency graph.
+
+## Sources
+
+- `https://hydrant.mit.edu/latest.json`: `classes` keyed by subject number, `termInfo`, `lastUpdated`, `locations`, `pe`. Ignore PE.
+- `https://hydrant.mit.edu/latestTerm.json`: current/pre-semester calendar metadata. Match the downloaded catalog's term rather than assuming the current semester.
+- Reference: <https://github.com/sipb/hydrant>. Upstream implementation is GPL-licensed. Consume the public data without copying upstream implementation.
+
+The upstream `src/lib/raw.ts` and `scrapers/utils.py` define lowercase `sectionKinds`, `{kind}Sections`, and sections `[meetings, room]`. Each raw meeting is `[start_slot, length]`:
+
+```text
+weekday = start_slot / 34                  # integer division, Monday = 0
+start_minute = 360 + 30 * (start_slot % 34)
+end_minute = start_minute + 30 * length
+```
+
+Published encoding uses 34 half-hour slots per weekday beginning at 06:00. The domain model is not restricted to that resolution. Manual entries preserve exact minutes and can use weekends. `half` and `quarterInfo` identify date-limited cases that must remain visible but are unsupported by the weekly optimizer.
+
+## Shared model
+
+```text
+Dataset: term_id, last_updated, optional calendar, courses, notices
+TermCalendar: start, end, holidays, alternate_days[date -> weekday]
+Course: id, title, requirements, notices
+Requirement: id, kind, options, has_unknown_times
+SectionOption: id, label, room, source(api|manual), meetings,
+               incompatible_with[option IDs], optional unsupported_reason
+Meeting: weekday(0=Mon..6=Sun), start_minute, end_minute,
+         optional start_date/end_date
+TimeChoice: id, requirement_id, canonical meetings, members[SectionOption]
+Score: occupied_days, gap_minutes
+Solution: status(optimal_known|infeasible|cancelled), choices, optional score,
+          unresolved notices
+ManualEntry: term_id, course_id, kind, option, enabled
+ManualStore: version, entries
+ChosenSection: course_id, course_title, kind, actual SectionOption
+```
+
+Use owned records and stable IDs across UI state, persisted edits, solver results, and export. Do not hold references into mutable UI collections. A requirement is one subject/component, e.g. `6.1200/recitation`. Select an option's complete meeting bundle. Retain available rooms/labels, but do not invent official section numbers. Canonical ordering is explicit rather than dependent on hash-map iteration.
+
+## Data and manual edits
+
+- Fetch and parse failures are errors, not empty catalogs. Validate before replacing the last good cache. Cache raw catalog and matching term metadata together, atomically, with a fetch timestamp.
+- Offline mode reads only the cache. Online failure can use the last good cache with a visible explanation and data age. A missing/bad cache never masquerades as a valid schedule.
+- Manual records live separately, keyed by term/subject/component/option. Refresh never overwrites edits. Load and validate the store before applying enabled entries to a cloned dataset.
+- Manual entry supports alternative sections with multiple meetings, optional room and dates, and exact times. Reject malformed time order/ranges. Preserve known components when filling TBA information.
+- Retain manual records when published options arrive. Show their presence and let users enable, disable, or edit them. Identical interchangeable meeting patterns are grouped, avoiding duplicate search work while preserving actual members.
+- Different terms never share manual entries. Disabled records stay available for later review. Invalid persisted data yields a descriptive error rather than silent loss.
+
+## Search and UI
+
+The optimizer is a pure in-memory function. It receives selected merged requirements and an optional cancellation flag. See [OPTIMIZER.MD](OPTIMIZER.MD). All input sources follow this path.
+
+The TUI owns selection IDs, search text, editor state, chosen result members, and notices. Selection survives filtering. Any selection/manual edit invalidates the old result. Search runs on an ordinary worker thread, communicating its result to the event loop. Escape can cancel, and cancellation never claims an optimum or infeasibility. There is no need for application-wide async. Initial HTTP loading happens before entering terminal raw mode.
+
+Terminal setup has restoration guards for normal exit, errors, and panics. The interface provides catalog selection, manual entry management, score/timetable, unresolved notices, actual same-time member switching, explicit infeasibility, and local export.
+
+## Calendar and output safety
+
+Expand each selected actual section into dated occurrences within reliable term/meeting bounds. Apply holidays and alternate-weekday substitutions before timezone conversion. Interpret wall-clock times in `America/New_York`, then serialize each occurrence in UTC. This preserves 09:00 classes across DST rather than repeating a fixed UTC hour.
+
+Reject or disclose ambiguous/nonexistent local times, missing calendar bounds, and unsupported sections. Export known supported meetings and surface omissions. Include stable event UIDs and escaped labels/rooms. Do not claim that successful serialization alone proves calendar-client interoperability.
+
+Write output atomically and never overwrite an existing file. Export does not mutate a user's calendar account. Release artifacts are native executables per target; only platforms actually built and exercised are claimed as verified.

@@ -72,3 +72,31 @@ The tables use these unambiguous abbreviations:
 Use the baseline-build and `HYDRANT_UX_BASELINE_BIN` command in [VALIDATION.MD](VALIDATION.MD), with `RUST_TEST_NOCAPTURE=1 bash scripts/verify-mvp.sh --live`. Do not replace this with only the new PE or renderer tests. Require both debug and release `UX_COMPARISON` records and the named per-requirement passes above.
 
 **Outcome:** the complete current result satisfies all mapped requirements for both goals. The feedback loop now has an observation for every row and an actual before/after comparison for the UX improvements. Limits remain macOS arm64 verification, known supported inputs, combined-week PE scoring, and parsed local ICS rather than calendar-account import.
+
+## Session room rows: actual-terminal comparison (2026-09-09 13:37 UTC)
+
+The room-row replay ran the pre-change executable built from `ab9e9a8` and the updated executable against the same offline CLI-created fixture in separate **120-column × 110-row native PTYs**. This is an observed screen comparison, not a source-inspection judgment. The test `actual_tui_week_replay_preserves_exact_times_and_records_observations` asserted and emitted:
+
+| Requirement | Before | After |
+|---|---|---|
+| Preserve the first-row legend for Tuesday 09:35–10:05 | `W Lec` at 09:30 | `W Lec` at 09:30 |
+| Show the room on the second occupied row | Blank at 10:00 | `Week room two` at 10:00 |
+| Omit rooms for one-row sessions | No `Bucket room` in the timetable | No `Bucket room` in the timetable |
+| Do not leak the room past the session end | Not the improvement target | 10:30 is `·`, and the selected room occurs exactly once in the entire timetable |
+| Refresh when switching same-time sections | Not the improvement target | Enter, Enter, l changes the room to `Week room one`, with zero occurrences of the stale room |
+
+Both executables restored terminal state. The updated workflow still exported 17 events with the selected room and exact minute/midnight boundaries. The 29 weekly-renderer tests also passed, including 165 start/duration cases, widths 0–120 with Unicode room labels, missing/multiline rooms, duplicate and overlapping rooms, later continuation rows, invalid/weekend meetings, and preserved selection style. Strict Clippy passed. The earlier full offline run passed 118 tests with four opt-in tests ignored.
+
+Evidence is retained under `$JCODE_SCRATCH_DIR/hydrant-room-replay.TJ9Mwm/`: `comparison.log` contains the asserted `session_room_row` comparison and `session_room_switch` observations, `renderer-tests.log` contains the edge-case results, and `clippy.log` records lint completion. The directory also contains the archived baseline, build log, and current revision/worktree snapshot.
+
+A second actual-terminal replay at 13:38 UTC also passed after concurrent changes hid half-hour time labels and replaced unoccupied `·` cells with blanks. `latest-comparison.log` records the same legend/room improvement, zero short-session or stale-room occurrences, and a blank unoccupied cell after the meeting. These unrelated presentation changes do not alter the two occupied session rows.
+
+To reproduce, build an archive of `ab9e9a8` in an isolated scratch directory, then run:
+
+```sh
+HYDRANT_ROOM_BASELINE_BIN=/absolute/path/to/baseline/target/debug/hydrant-optimizer \
+  cargo test --locked --test tui_acceptance \
+  actual_tui_week_replay_preserves_exact_times_and_records_observations -- --nocapture
+```
+
+The normal acceptance assertions and observations always run. Setting `HYDRANT_ROOM_BASELINE_BIN` additionally requires the observed pre-change blank room row and the before/after comparison to pass.

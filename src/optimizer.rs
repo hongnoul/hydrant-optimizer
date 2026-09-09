@@ -19,6 +19,10 @@ const MINUTES_PER_WEEK: usize = DAYS_PER_WEEK * MINUTES_PER_DAY;
 const WORD_BITS: usize = u64::BITS as usize;
 const WEEK_WORDS: usize = MINUTES_PER_WEEK.div_ceil(WORD_BITS);
 
+/// Maximum retained equal-best grouped timetables, including the primary one.
+/// Search continues after this limit to prove optimality and detect truncation.
+pub const MAX_TIMETABLE_ALTERNATIVES: usize = 256;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct WeekBits([u64; WEEK_WORDS]);
 
@@ -167,6 +171,8 @@ fn solve_impl(
         return Ok(Solution {
             status: SolveStatus::OptimalKnown,
             choices: Vec::new(),
+            alternatives: vec![Vec::new()],
+            alternatives_truncated: false,
             score: Some(Score {
                 occupied_days: 0,
                 gap_minutes: 0,
@@ -187,7 +193,8 @@ fn solve_impl(
         calendar,
         cancel,
         best_score: None,
-        best_choices: Vec::new(),
+        best_alternatives: Vec::new(),
+        alternatives_truncated: false,
         selected: Vec::new(),
         occupancy: WeekBits::empty(),
         date_sensitive_conflicts,
@@ -202,17 +209,22 @@ fn solve_impl(
         return Ok(Solution {
             status: SolveStatus::Infeasible,
             choices: Vec::new(),
+            alternatives: Vec::new(),
+            alternatives_truncated: false,
             score: None,
             unresolved,
         });
     };
 
-    let mut choices = search.best_choices;
-    choices.sort_by(|a, b| {
-        a.requirement_id
-            .cmp(&b.requirement_id)
-            .then_with(|| a.id.cmp(&b.id))
-    });
+    let mut alternatives = search.best_alternatives;
+    for choices in &mut alternatives {
+        choices.sort_by(|a, b| {
+            a.requirement_id
+                .cmp(&b.requirement_id)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+    }
+    let choices = alternatives[0].clone();
     if choices.iter().any(|choice| {
         groups
             .iter()
@@ -223,12 +235,19 @@ fn solve_impl(
             "selected bounded PE meetings use a combined weekly template for score, and date bounds constrain conflicts and calendar export"
                 .to_string(),
         );
-        unresolved.sort();
-        unresolved.dedup();
     }
+    if search.alternatives_truncated {
+        unresolved.push(format!(
+            "equally optimal timetable alternatives are limited to the first {MAX_TIMETABLE_ALTERNATIVES}; additional equal-best grouped timetables were omitted"
+        ));
+    }
+    unresolved.sort();
+    unresolved.dedup();
     Ok(Solution {
         status: SolveStatus::OptimalKnown,
         choices,
+        alternatives,
+        alternatives_truncated: search.alternatives_truncated,
         score: Some(score),
         unresolved,
     })
@@ -239,7 +258,8 @@ struct SearchState<'a> {
     calendar: Option<&'a TermCalendar>,
     cancel: Option<&'a AtomicBool>,
     best_score: Option<Score>,
-    best_choices: Vec<TimeChoice>,
+    best_alternatives: Vec<Vec<TimeChoice>>,
+    alternatives_truncated: bool,
     selected: Vec<Candidate>,
     occupancy: WeekBits,
     date_sensitive_conflicts: bool,
@@ -252,16 +272,26 @@ impl SearchState<'_> {
         }
         if group_index == self.groups.len() {
             let score = score_bits(&self.occupancy);
-            if self
-                .best_score
-                .is_none_or(|best| compare_scores(score, best) == CmpOrdering::Less)
-            {
-                self.best_score = Some(score);
-                self.best_choices = self
-                    .selected
-                    .iter()
-                    .map(|candidate| candidate.choice.clone())
-                    .collect();
+            match self.best_score.map(|best| compare_scores(score, best)) {
+                None | Some(CmpOrdering::Less) => {
+                    self.best_score = Some(score);
+                    self.best_alternatives.clear();
+                    self.alternatives_truncated = false;
+                }
+                Some(CmpOrdering::Greater) => return false,
+                Some(CmpOrdering::Equal) => {}
+            }
+            // Each leaf picks one distinct canonical group per requirement.
+            // Interchangeable actual members never create duplicate leaves.
+            if self.best_alternatives.len() < MAX_TIMETABLE_ALTERNATIVES {
+                self.best_alternatives.push(
+                    self.selected
+                        .iter()
+                        .map(|candidate| candidate.choice.clone())
+                        .collect(),
+                );
+            } else {
+                self.alternatives_truncated = true;
             }
             return false;
         }
@@ -615,6 +645,8 @@ fn cancelled_solution(unresolved: Vec<String>) -> Solution {
     Solution {
         status: SolveStatus::Cancelled,
         choices: Vec::new(),
+        alternatives: Vec::new(),
+        alternatives_truncated: false,
         score: None,
         unresolved,
     }

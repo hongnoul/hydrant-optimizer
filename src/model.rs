@@ -288,7 +288,19 @@ pub enum SolveStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Solution {
     pub status: SolveStatus,
+    /// Active timetable. The optimizer initializes this to `alternatives[0]`.
     pub choices: Vec<TimeChoice>,
+    /// Distinct equal-best grouped timetables in deterministic search order,
+    /// including the initial `choices` at index zero. Every entry has `score`.
+    /// Same-time interchangeable members remain inside each `TimeChoice`.
+    /// Empty for infeasible/cancelled results and legacy serialized solutions.
+    /// A solved empty selection has one alternative containing no choices.
+    #[serde(default)]
+    pub alternatives: Vec<Vec<TimeChoice>>,
+    /// More equal-best timetables exist than the optimizer's retention limit.
+    /// This limits enumeration in the result, never the optimality of `score`.
+    #[serde(default)]
+    pub alternatives_truncated: bool,
     pub score: Option<Score>,
     pub unresolved: Vec<String>,
 }

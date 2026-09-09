@@ -2,9 +2,20 @@
 
 ## Contract
 
-Given the user's fixed subjects and merged API/manual time choices, return one deterministic optimum with selected choice IDs, or explicit infeasibility, plus unresolved-time notices. Claim optimality only over known, supported options. Retain grouped members for later section/room selection.
+Given the user's fixed subjects and merged API/manual time choices, return a deterministic optimum with selected choice IDs and equally optimal grouped timetable alternatives, or explicit infeasibility, plus unresolved-time notices. Claim optimality only over known, supported options. Retain grouped members for later section/room selection.
 
 The public library entry points are `optimizer::solve(&[Requirement], Option<&AtomicBool>) -> anyhow::Result<Solution>` and `solve_with_calendar(&[Requirement], &TermCalendar, Option<&AtomicBool>)`. CLI/TUI orchestration uses the latter whenever a calendar is available. Without one, dated overlap follows natural weekdays without holiday/substitution knowledge. Input errors remain errors, not infeasibility. A cancellation flag produces `cancelled` with no optimality claim. The UI runs this pure computation on a worker thread. No Python process or external solver is involved.
+
+### Timetable alternatives API
+
+- `Solution.choices: Vec<TimeChoice>` remains the active timetable used by existing display, actual-section resolution, and calendar export. The optimizer initializes it to `alternatives[0]`, preserving the previous deterministic tie winner.
+- `Solution.alternatives: Vec<Vec<TimeChoice>>` includes that initial timetable and each retained equal-best distinct grouped assignment. Every entry has exactly `Solution.score`. Distinctness is by grouped choice identity per requirement, not just occupied minutes. Interchangeable same-time rooms/sections remain in `TimeChoice.members`, not duplicate alternatives. Pairing-distinguished groups and different date windows remain distinct.
+- Alternatives follow deterministic depth-first search order: requirements by increasing grouped-domain size then requirement ID, candidates by stable choice ID. Choices inside each alternative are sorted by requirement ID then choice ID. Reordering input requirements/options does not change the result.
+- `optimizer::MAX_TIMETABLE_ALTERNATIVES` is **256 total timetables, including the initial one**. `Solution.alternatives_truncated` is true only when additional equal-best assignments were actually found. The same truncation is disclosed in `unresolved`. The search still examines all feasible assignments, so the cap never compromises optimality. A better score clears the previous alternatives and truncation flag.
+- Both added fields have `#[serde(default)]`. Older serialized results deserialize with no alternatives and `alternatives_truncated == false`. This is serialization-compatible, but Rust callers constructing `Solution` literals must supply the added fields.
+- Infeasible/cancelled results have no alternatives. An empty or unknown-only supported selection has one empty alternative with score `(0, 0)`.
+
+UI integration: keep a zero-based alternative index and cycle modulo `solution.alternatives.len()`. Install `solution.choices = solution.alternatives[index].clone()`, then reset or revalidate actual-member selections because a requirement can now have different members. Keep the alternatives list intact for cycling back to the initial timetable. Existing `app::actual_sections` and `app::write_calendar` consume the active `choices` unchanged. For legacy results with an empty alternatives list, treat `choices` as the single available timetable. Only enable cycling for `OptimalKnown` results.
 
 For the combined weekly pattern of all supported selected meetings, minimize lexicographically:
 
@@ -21,11 +32,11 @@ Count weekends if used. Empty days contribute zero; ignore time outside the firs
 2. Keep components as separate choice groups. Avoid precomputing cross-component bundles. Omit components without known times from search and list them as unresolved. An empty domain caused by conflicts is infeasible.
 3. Encode complete options as weekly bitsets. Use one bit per minute across seven days: 10,080 bits in `[u64; 158]`, 1,264 bytes per bitset. Keep unused tail bits zero. Preserve exact manual times. Conflict checks scan corresponding words, avoiding arbitrary-precision or compressed-bitset dependencies.
 4. Process fixed/few-option groups first. Backtrack on overlaps or known pairing incompatibilities. The full-term path uses bitset overlap. When bounded PE is present, compare exact intervals on common active calendar dates, clipped to the term and adjusted for holidays/alternate weekdays. Disjoint quarters can occupy the same weekly bit without conflicting.
-5. Score complete feasible assignments as they are generated. Retain only the best, using stable order for ties.
+5. Score complete feasible assignments as they are generated. Replace retained assignments on improvement and append equally optimal distinct grouped choices up to the retention cap, using stable search order for ties.
 
 ```text
 search(remaining_groups, occupancy, selected):
-    if none remain: compare score and retain best assignment; return
+    if none remain: compare score and retain best/equal-best assignments; return
     choose the next group
     for option in group:
         if conflicts(option, selected, calendar): continue
@@ -47,6 +58,6 @@ Earlier small research experiments favored simple bitset search in three of four
 
 ## Tests
 
-Compare scores AND returned assignments against an independent Cartesian-product oracle. Cover empty/infeasible inputs, adjacency/overlap, atomic multi-day bundles, deduplication, varying durations, minute-resolution manual entries, deterministic ties, and pairing restrictions. Explicitly test day priority over gaps, later gap filling, and better schedules in another equally small day subset. Same-time member switching must preserve times. Keep missing/TBA and unsupported-date components visible. Report feasibility only for known, supported meetings.
+Compare scores AND returned assignments against an independent Cartesian-product oracle. Expand retained member groups and compare their complete set of actual-section assignments against all oracle optima on small domains. Cover empty/infeasible inputs, adjacency/overlap, atomic multi-day bundles, deduplication, varying durations, minute-resolution manual entries, deterministic ties, and pairing restrictions. Explicitly test day priority over gaps, later gap filling, and better schedules in another equally small day subset. Same-time member switching must preserve times. Keep missing/TBA and unsupported-date components visible. Report feasibility only for known, supported meetings. Alternatives tests cover input permutations, identical occupancy with different grouped choices, date-window identity, generated small domains, exact/overflow cap boundaries, improvement after truncation, and legacy/current JSON roundtrips.
 
 Use interval comparisons and independently computed gaps in the oracle, not the production bitset/scoring helpers. Test asymmetric compatibility before grouping, invalid interval bounds, week/word boundaries, and cancellation. Run these against the actual library. Supplement with live-catalog CLI/TUI acceptance, because a scratch harness cannot establish that the application, data adapter, or calendar export is correct.

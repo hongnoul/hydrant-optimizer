@@ -23,7 +23,7 @@ struct Cli {
     /// Matching latestTerm.json metadata for --catalog.
     #[arg(long, global = true, requires = "catalog")]
     term: Option<PathBuf>,
-    /// Calendar output path. Existing files are never overwritten.
+    /// Export filename hint. The actual file always gains a Unix-time suffix.
     #[arg(long, global = true, default_value = "schedule.ics")]
     output: PathBuf,
     /// Machine-readable output for non-TUI commands.
@@ -254,7 +254,7 @@ fn run(cli: Cli) -> Result<u8> {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(
-                        &serde_json::json!({"solution":solution,"sections":actual,"export":report.as_ref().map(|r|serde_json::json!({"path":cli.output,"events":r.event_count,"notices":r.notices}))})
+                        &serde_json::json!({"solution":solution,"sections":actual,"export":report.as_ref().map(|r|serde_json::json!({"path":r.path,"events":r.event_count,"notices":r.notices}))})
                     )?
                 );
             } else {
@@ -306,7 +306,7 @@ fn run(cli: Cli) -> Result<u8> {
                     println!(
                         "Exported {} events to {}",
                         report.event_count,
-                        cli.output.display()
+                        report.path.display()
                     );
                     for notice in report.notices {
                         eprintln!("Export notice: {notice}");

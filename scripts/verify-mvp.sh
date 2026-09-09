@@ -60,19 +60,25 @@ fixture=(--data-dir "$evidence/data" --catalog "$repo/tests/fixtures/catalog.jso
 run installed-version 0 "${isolated[@]}" --version
 run installed-export 0 "${isolated[@]}" "${fixture[@]}" --json --output "$evidence/fixture.ics" optimize A B --export
 grep -q '"status": "optimal_known"' "$evidence/installed-export.stdout"
-events=$(grep -c '^BEGIN:VEVENT' "$evidence/fixture.ics")
+fixture_ics=$(python3 -c "import json; print(json.load(open('$evidence/installed-export.stdout'))['export']['path'])")
+[[ "$fixture_ics" == fixture-*.ics || "$fixture_ics" == *"/fixture-"*.ics ]]
+[[ ! -e "$evidence/fixture.ics" ]]
+events=$(grep -c '^BEGIN:VEVENT' "$fixture_ics")
 [[ $events == 6 ]]
 pe_fixture=(--data-dir "$evidence/pe-data" --catalog "$repo/tests/fixtures/catalog-pe.json" --term "$repo/tests/fixtures/term.json")
 run installed-pe-search 0 "${isolated[@]}" "${pe_fixture[@]}" --json search swimming
 grep -q '"id": "PE.1000.Q1"' "$evidence/installed-pe-search.stdout"
 grep -q '"id": "PE.1000.Q2"' "$evidence/installed-pe-search.stdout"
 run installed-pe-export 0 "${isolated[@]}" "${pe_fixture[@]}" --json --output "$evidence/pe.ics" optimize A PE.1000.Q1 PE.1000.Q2 --export
-[[ $(grep -c '^BEGIN:VEVENT' "$evidence/pe.ics") == 9 ]]
-[[ $(grep -c '^SUMMARY:PE.' "$evidence/pe.ics") == 3 ]]
+pe_ics=$(python3 -c "import json; print(json.load(open('$evidence/installed-pe-export.stdout'))['export']['path'])")
+[[ ! -e "$evidence/pe.ics" ]]
+[[ $(grep -c '^BEGIN:VEVENT' "$pe_ics") == 9 ]]
+[[ $(grep -c '^SUMMARY:PE.' "$pe_ics") == 3 ]]
 for stamp in 20261026T150000Z 20261103T160000Z 20261109T160000Z; do
-  grep -q "^DTSTART:$stamp" "$evidence/pe.ics"
+  grep -q "^DTSTART:$stamp" "$pe_ics"
 done
-cp "$evidence/fixture.ics" "$evidence/original.ics"
+cp "$fixture_ics" "$evidence/original.ics"
+before_count=$(ls "$evidence"/fixture-*.ics | wc -l)
 for format in text json; do
   args=(--output "$evidence/fixture.ics" optimize A C --export)
   if [[ $format == json ]]; then args+=(--json); fi
@@ -83,7 +89,9 @@ for format in text json; do
   else
     grep -q 'Infeasible:' "$evidence/infeasible-text.stdout"
   fi
-  cmp "$evidence/original.ics" "$evidence/fixture.ics"
+  # Infeasible exports mint no new timestamped files.
+  [[ $(ls "$evidence"/fixture-*.ics | wc -l) == "$before_count" ]]
+  cmp "$evidence/original.ics" "$fixture_ics"
 done
 run infeasible-new-file 2 "${isolated[@]}" "${fixture[@]}" --output "$evidence/missing.ics" optimize A C --export
 [[ ! -e "$evidence/missing.ics" ]]
@@ -96,7 +104,8 @@ if $live; then
   run opt-in 0 cargo test --release --locked -- --ignored --nocapture
   run installed-live-export 0 "${isolated[@]}" --data-dir "$evidence/live" --offline --json --output "$evidence/live.ics" optimize 6.1200 18.01 --export
   grep -q '"status": "optimal_known"' "$evidence/installed-live-export.stdout"
-  events=$(grep -c '^BEGIN:VEVENT' "$evidence/live.ics")
+  live_ics=$(python3 -c "import json; print(json.load(open('$evidence/installed-live-export.stdout'))['export']['path'])")
+  events=$(grep -c '^BEGIN:VEVENT' "$live_ics")
   (( events > 0 ))
   echo "Installed live workflow exported $events events."
 else

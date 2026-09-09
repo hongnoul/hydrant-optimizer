@@ -89,7 +89,7 @@ Expand each selected actual section into dated occurrences within reliable term/
 
 Reject or disclose ambiguous/nonexistent local times, missing calendar bounds, and unsupported sections. Export known supported meetings and surface omissions. Include stable event UIDs and escaped labels/rooms. Do not claim that successful serialization alone proves calendar-client interoperability.
 
-Write output atomically and never overwrite an existing file. Export does not mutate a user's calendar account. Release artifacts are native executables per target; only platforms actually built and exercised are claimed as verified.
+Write output atomically with a Unix-time filename suffix, so every export is a new file. Export does not mutate a user's calendar account. Release artifacts are native executables per target; only platforms actually built and exercised are claimed as verified.
 
 CLI `--export` invokes calendar writing only for a completed feasible result. Infeasible optimization retains its explicit text/JSON, unresolved notices, and exit code 2 without touching the output path.
 

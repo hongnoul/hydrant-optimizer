@@ -82,12 +82,12 @@ fn actual_cli_selection_manual_entry_optimization_switch_and_export() {
     assert_eq!(group["members"].as_array().unwrap().len(), 2);
     let member = group["members"][1]["id"].as_str().unwrap();
     let mapping = format!("A/lecture={member}");
-    let path = dir.join("schedule.ics");
+    let hint = dir.join("schedule.ics");
     let exported = json_ok(
         dir,
         &[
             "--output",
-            path.to_str().unwrap(),
+            hint.to_str().unwrap(),
             "optimize",
             "A",
             "B",
@@ -104,25 +104,45 @@ fn actual_cli_selection_manual_entry_optimization_switch_and_export() {
             .iter()
             .any(|v| v["section"]["id"] == member)
     );
+    let path = Path::new(exported["export"]["path"].as_str().unwrap()).to_path_buf();
+    assert_eq!(path.parent().unwrap(), dir);
+    assert!(
+        path.file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("schedule-"),
+        "export must carry a Unix-time signature: {}",
+        path.display()
+    );
+    assert_eq!(path.extension().unwrap(), "ics");
+    assert!(!hint.exists(), "the bare hint must never be written");
     let text = fs::read_to_string(&path).unwrap();
     let calendar: icalendar::Calendar = text.parse().unwrap();
     assert!(calendar.events().count() > 0);
     assert!(text.contains("DTSTART:20261026T130000Z"));
     assert!(text.contains("DTSTART:20261103T140000Z"));
     assert!(!text.contains("DTSTART:20261102"));
-    let output = invoke(
+    // A repeat export must mint a fresh Unix-time file, never overwrite.
+    let again = json_ok(
         dir,
         &[
             "--output",
-            path.to_str().unwrap(),
+            hint.to_str().unwrap(),
             "optimize",
             "A",
             "B",
             "--export",
         ],
     );
-    assert!(!output.status.success());
+    let second = Path::new(again["export"]["path"].as_str().unwrap()).to_path_buf();
+    assert_ne!(second, path);
     assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    assert!(
+        fs::read_to_string(&second)
+            .unwrap()
+            .contains("DTSTART:20261026T130000Z")
+    );
 
     json_ok(dir, &["manual", "disable", id]);
     let disabled = json_ok(dir, &["optimize", "A", "B"]);

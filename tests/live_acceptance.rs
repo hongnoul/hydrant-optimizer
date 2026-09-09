@@ -141,13 +141,13 @@ fn live_catalog_manual_refresh_optimize_switch_and_export() {
     let after = checked(dir, &["--offline", "optimize", "6.1200"]);
     assert_eq!(before["solution"]["score"], after["solution"]["score"]);
     let mapping = format!("6.1200/{kind}={id}");
-    let output = dir.join("live.ics");
+    let hint = dir.join("live.ics");
     let exported = checked(
         dir,
         &[
             "--offline",
             "--output",
-            output.to_str().unwrap(),
+            hint.to_str().unwrap(),
             "optimize",
             "6.1200",
             "--member",
@@ -163,6 +163,8 @@ fn live_catalog_manual_refresh_optimize_switch_and_export() {
             .iter()
             .any(|s| s["section"]["room"] == "LOCAL TEST ROOM")
     );
+    let output = std::path::Path::new(exported["export"]["path"].as_str().unwrap()).to_path_buf();
+    assert!(!hint.exists(), "the bare hint must never be written");
     let text = fs::read_to_string(&output).unwrap();
     let parsed: icalendar::Calendar = text.parse().unwrap();
     let count = parsed.events().count();
@@ -172,21 +174,20 @@ fn live_catalog_manual_refresh_optimize_switch_and_export() {
     );
     assert!(count > 0);
     assert!(text.contains("LOCAL TEST ROOM"));
-    assert!(
-        !invoke(
-            dir,
-            &[
-                "--offline",
-                "--output",
-                output.to_str().unwrap(),
-                "optimize",
-                "6.1200",
-                "--export"
-            ]
-        )
-        .status
-        .success()
+    // A repeat export mints a fresh Unix-time file, never overwriting.
+    let again = checked(
+        dir,
+        &[
+            "--offline",
+            "--output",
+            hint.to_str().unwrap(),
+            "optimize",
+            "6.1200",
+            "--export",
+        ],
     );
+    let second = std::path::Path::new(again["export"]["path"].as_str().unwrap()).to_path_buf();
+    assert_ne!(second, output);
     assert_eq!(fs::read_to_string(&output).unwrap(), text);
 
     let pe_courses = checked(dir, &["--offline", "search", "PE."]);
@@ -218,19 +219,22 @@ fn live_catalog_manual_refresh_optimize_switch_and_export() {
     let end =
         chrono::NaiveDate::parse_from_str(pe_meetings[0]["end_date"].as_str().unwrap(), "%Y-%m-%d")
             .unwrap();
-    let pe_output = dir.join("live-pe.ics");
+    let pe_hint = dir.join("live-pe.ics");
     let pe_export = checked(
         dir,
         &[
             "--offline",
             "--output",
-            pe_output.to_str().unwrap(),
+            pe_hint.to_str().unwrap(),
             "optimize",
             pe_id,
             "--export",
         ],
     );
-    let pe_text = fs::read_to_string(pe_output).unwrap();
+    let pe_output =
+        std::path::Path::new(pe_export["export"]["path"].as_str().unwrap()).to_path_buf();
+    assert!(!pe_hint.exists(), "the bare hint must never be written");
+    let pe_text = fs::read_to_string(&pe_output).unwrap();
     let pe_calendar: icalendar::Calendar = pe_text.parse().unwrap();
     let pe_count = pe_calendar.events().count();
     assert!(pe_count > 0);
@@ -257,7 +261,7 @@ fn live_catalog_manual_refresh_optimize_switch_and_export() {
         pe_courses.len()
     );
     println!(
-        "LIVE_ACCEPTANCE score={} events={count} manual_retained=true member_switched=true offline=true fallback_with_age=true failed_refresh_preserved=true no_clobber=true",
+        "LIVE_ACCEPTANCE score={} events={count} manual_retained=true member_switched=true offline=true fallback_with_age=true failed_refresh_preserved=true timestamped_exports=true",
         exported["solution"]["score"]
     );
 }

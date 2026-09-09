@@ -53,6 +53,10 @@ fn missing_calendar_and_invalid_member_never_create_output() {
     base.calendar = None;
     assert!(app::write_calendar(&base, &solution, &BTreeMap::new(), &output).is_err());
     assert!(!output.exists());
+    assert!(
+        std::fs::read_dir(temp.path()).unwrap().next().is_none(),
+        "failed exports must not mint timestamped files"
+    );
 }
 
 #[test]
@@ -163,5 +167,50 @@ fn actual_member_resolution_rejects_incompatibilities_in_either_direction() {
         assert!(app::actual_sections(&base, &invalid, &selected).is_err());
         assert!(app::write_calendar(&base, &invalid, &selected, &output).is_err());
         assert!(!output.exists());
+        assert!(
+            std::fs::read_dir(temp.path()).unwrap().all(|entry| {
+                let name = entry.unwrap().file_name().into_string().unwrap();
+                !name.starts_with(&format!("unsafe-{reverse}-"))
+            }),
+            "failed exports must not mint timestamped files"
+        );
+    }
+}
+
+#[test]
+fn export_paths_always_carry_unix_time_and_repeat_exports_never_reuse() {
+    assert_eq!(
+        app::timestamped_export_path(std::path::Path::new("schedule.ics"), 1_757_424_600),
+        std::path::PathBuf::from("./schedule-1757424600.ics")
+    );
+    assert_eq!(
+        app::timestamped_export_path(
+            std::path::Path::new("exports/my-schedule.ics"),
+            1_757_424_600
+        ),
+        std::path::PathBuf::from("exports/my-schedule-1757424600.ics")
+    );
+    let base = dataset();
+    let solution = app::optimize(&base, &["B".to_owned()], None).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let hint = temp.path().join("repeat.ics");
+    let first = app::write_calendar(&base, &solution, &BTreeMap::new(), &hint).unwrap();
+    // Same-second reruns must still mint a distinct file, not overwrite.
+    let second = app::write_calendar(&base, &solution, &BTreeMap::new(), &hint).unwrap();
+    assert_ne!(first.path, second.path);
+    assert!(!hint.exists(), "the bare hint must never be written");
+    for path in [&first.path, &second.path] {
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("repeat-"),
+            "missing Unix-time signature: {}",
+            path.display()
+        );
+        assert_eq!(path.extension().unwrap(), "ics");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("BEGIN:VEVENT"));
     }
 }

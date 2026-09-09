@@ -2,8 +2,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::AtomicBool,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, ensure};
@@ -120,11 +121,30 @@ pub fn actual_sections(
     Ok(chosen)
 }
 
+pub fn timestamped_export_path(hint: &Path, stamp: u64) -> PathBuf {
+    let parent = hint
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let stem = hint
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("schedule");
+    let extension = hint
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| !e.is_empty())
+        .unwrap_or("ics");
+    parent.join(format!("{stem}-{stamp}.{extension}"))
+}
+
 pub fn write_calendar(
     dataset: &Dataset,
     solution: &Solution,
     members: &BTreeMap<String, String>,
-    path: &Path,
+    hint: &Path,
 ) -> Result<ExportReport> {
     let chosen = actual_sections(dataset, solution, members)?;
     let term = dataset
@@ -135,22 +155,63 @@ pub fn write_calendar(
     report.notices.extend(solution.unresolved.clone());
     report.notices.sort();
     report.notices.dedup();
-    let parent = path
+    let parent = hint
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let mut temp = tempfile::NamedTempFile::new_in(parent)
-        .with_context(|| format!("cannot create output in {}", parent.display()))?;
-    temp.write_all(report.ics.as_bytes())?;
-    temp.as_file().sync_all()?;
-    temp.persist_noclobber(path).map_err(|e| {
-        anyhow::anyhow!(
-            "cannot create {} (existing files are never overwritten): {}",
-            path.display(),
-            e.error
-        )
-    })?;
-    Ok(report)
+    // Every export gets a Unix-time signature so repeats never overwrite.
+    // A same-second retry appends a counter rather than reusing a name.
+    let mut stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut attempt = 0u32;
+    loop {
+        let suffix = if attempt == 0 {
+            stamp.to_string()
+        } else {
+            format!("{stamp}-{attempt}")
+        };
+        let stem = hint
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("schedule");
+        let extension = hint
+            .extension()
+            .and_then(|e| e.to_str())
+            .filter(|e| !e.is_empty())
+            .unwrap_or("ics");
+        let path = parent.join(format!("{stem}-{suffix}.{extension}"));
+        let mut temp = tempfile::NamedTempFile::new_in(parent)
+            .with_context(|| format!("cannot create output in {}", parent.display()))?;
+        temp.write_all(report.ics.as_bytes())?;
+        temp.as_file().sync_all()?;
+        match temp.persist_noclobber(&path) {
+            Ok(_) => {
+                report.path = path;
+                return Ok(report);
+            }
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Same-second collision: keep the same stamp on the first
+                // retry so tests can predict it, then advance the clock.
+                if attempt == 0 {
+                    attempt = 1;
+                } else {
+                    stamp = stamp.saturating_add(1);
+                    attempt = 0;
+                }
+                continue;
+            }
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "cannot create {}: {}",
+                    path.display(),
+                    error.error
+                ));
+            }
+        }
+    }
 }
 
 pub fn manual_entry(

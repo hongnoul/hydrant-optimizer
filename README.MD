@@ -30,7 +30,8 @@ hydrant-optimizer --offline manual add --course 6.1200 --kind recitation \
   --label 'Announced section' --room '32-123' \
   --meetings 'Wed 13:05-14:00;Fri 13:05-14:00'
 
-# Export the selected schedule. Existing files are never overwritten.
+# Export the selected schedule. Every export gains a Unix-time suffix
+# (e.g. my-schedule-1757424600.ics), so repeats never overwrite.
 hydrant-optimizer --offline --output my-schedule.ics optimize 6.1200 18.01 --export
 
 # Machine-readable results include same-time members and their stable IDs.
@@ -116,7 +117,7 @@ Press `a` on the highlighted offering to add manual times. A timed published PE 
 - Collapse only interchangeable complete time patterns. After optimization, switch actual sections/rooms without changing the timetable or violating pairing restrictions.
 - Manual sections use the same normalized model as published sections. Alternative sections may contain several meetings. Keep known components when supplying TBA information.
 - Show selected sections, timetable, score, unresolved-time notices, and explicit infeasibility. An interrupted search never claims optimality.
-- Export only selected, known, supported meetings. Calendar export uses `America/New_York`, semester bounds, holidays and alternate-weekday dates. Existing output files are protected. Each exported event carries the same nth-distinct-course color as the timetable (`COLOR`, `CATEGORIES`, `DESCRIPTION`, `X-HYDRANT-*` with the closest Google Calendar event color name, hex, and `colorId`). Google Calendar ignores per-event colors on ICS import and colors imported events by calendar instead, so reapply the named Google color after import if desired.
+- Export only selected, known, supported meetings. Calendar export uses `America/New_York`, semester bounds, holidays and alternate-weekday dates. Every export filename carries a Unix-time signature, so repeats never overwrite. Each exported event carries the same nth-distinct-course color as the timetable (`COLOR`, `CATEGORIES`, `DESCRIPTION`, `X-HYDRANT-*` with the closest Google Calendar event color name, hex, and `colorId`). Google Calendar ignores per-event colors on ICS import and colors imported events by calendar instead, so reapply the named Google color after import if desired.
 - Infeasible CLI optimization returns explicit text/JSON and exit code **2**, including with `--export`. No calendar is created or modified for an infeasible result.
 
 ## Boundaries

@@ -136,13 +136,20 @@ fn pe_catalog_optimizes_with_academics_and_exports_only_offering_dates() {
             .all(|section| section.section.meetings[0].start_minute == 660)
     );
     let temp = tempfile::tempdir().unwrap();
-    let report = app::write_calendar(
-        &dataset,
-        &solution,
-        &BTreeMap::new(),
-        &temp.path().join("pe.ics"),
-    )
-    .unwrap();
+    let hint = temp.path().join("pe.ics");
+    let report = app::write_calendar(&dataset, &solution, &BTreeMap::new(), &hint).unwrap();
+    assert!(
+        report
+            .path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("pe-"),
+        "export must carry a Unix-time signature: {}",
+        report.path.display()
+    );
+    assert!(!hint.exists(), "the bare hint must never be written");
     assert_eq!(report.event_count, 9); // 6 academic + Q1 Oct26 + Q2 Nov3/Nov9.
     assert!(report.ics.contains("PE.1000.Q1 pe") && report.ics.contains("PE.1000.Q2 pe"));
     let pe_events: Vec<_> = report

@@ -871,7 +871,7 @@ impl AppState {
         let report =
             app::write_calendar(&self.dataset, solution, &self.actual_members, &self.output)?;
         let summary = ExportSummary {
-            path: self.output.clone(),
+            path: report.path.clone(),
             event_count: report.event_count,
             notices: report.notices,
         };
@@ -1998,6 +1998,7 @@ mod viewport_tests {
                 "j/k or Down/Up",
                 "Scroll the timetable.",
                 "First/last line in the timetable",
+                "Timetable: h/l choices",
                 "Press ? or Esc to close help.",
             ] {
                 assert!(screen.contains(text), "missing {text} at {width}x{height}");

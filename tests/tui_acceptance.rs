@@ -152,6 +152,37 @@ fn cli(dir: &Path, args: &[&str]) -> Value {
     serde_json::from_slice(&out.stdout).unwrap()
 }
 
+// Exports always gain a Unix-time suffix, so locate the fresh file from its hint.
+fn latest_export(dir: &Path, hint: &Path) -> std::path::PathBuf {
+    let stem = hint
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("schedule");
+    let mut matches: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension().and_then(|e| e.to_str()) == Some("ics")
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(&format!("{stem}-")))
+        })
+        .collect();
+    matches.sort();
+    matches.pop().expect("expected a timestamped export")
+}
+
+fn read_latest_export(dir: &Path, hint: &Path) -> String {
+    let path = latest_export(dir, hint);
+    assert!(
+        !hint.exists(),
+        "the bare hint {} must never be written",
+        hint.display()
+    );
+    fs::read_to_string(&path).unwrap()
+}
+
 fn week_row(screen: &str, time: &str) -> Option<Vec<String>> {
     let half_hour = time.ends_with(":30");
     let label = if half_hour {
@@ -505,7 +536,7 @@ fn actual_tui_pe_search_selection_labels_and_bounded_export() {
     assert_eq!(week_row(&screen, "11:00").unwrap()[1], "PE.1000.Q1 PE");
     ui.send(b"e");
     ui.marker("Exported");
-    let text = fs::read_to_string(&output).unwrap();
+    let text = read_latest_export(temp.path(), &output);
     let calendar: icalendar::Calendar = text.parse().unwrap();
     assert_eq!(calendar.events().count(), 7);
     let pe_events: Vec<_> = text
@@ -773,7 +804,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     );
     ui.send(b"e");
     ui.marker("Exported");
-    let calendar = fs::read_to_string(&output).unwrap();
+    let calendar = read_latest_export(dir, &output);
     let parsed: icalendar::Calendar = calendar.parse().unwrap();
     assert_eq!(parsed.events().count(), 17);
     for exact in [
@@ -1258,7 +1289,7 @@ fn actual_tui_80x24_navigates_sessions_and_exports_with_unknown_subjects() {
     assert_three_pane_ui(&ui.screen.screen().contents());
     ui.send(b"e");
     ui.marker("Exported");
-    let text = fs::read_to_string(&output).unwrap();
+    let text = read_latest_export(dir, &output);
     let parsed: icalendar::Calendar = text.parse().unwrap();
     assert_eq!(parsed.events().count(), 6);
     assert!(
@@ -1427,21 +1458,24 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
     ui.marker("PTY acceptance alternative");
     ui.send(b"e");
     ui.marker("Exported");
-    let calendar = fs::read_to_string(&output).unwrap();
+    let first_path = latest_export(dir, &output);
+    let calendar = fs::read_to_string(&first_path).unwrap();
     assert!(calendar.contains("PTY ROOM"));
     assert!(calendar.contains("6.1200"));
     assert!(calendar.contains("18.01"));
     let parsed: icalendar::Calendar = calendar.parse().unwrap();
     let events = parsed.events().count();
     assert!(events > 0);
-    // A second export must not overwrite the first file.
+    // A second export mints a fresh Unix-time file, never overwriting the first.
     ui.send(b"e");
-    ui.until("overwrite rejection", |s| {
-        // Long checkout/output paths can wrap "never overwritten" across rows.
-        // Require the failure status and its reason, then verify bytes below.
-        s.contains("Export failed:") && (s.contains("overwritten") || s.contains("already exists"))
-    });
-    assert_eq!(fs::read_to_string(&output).unwrap(), calendar);
+    ui.marker("Exported");
+    let second_path = latest_export(dir, &output);
+    assert_ne!(
+        second_path, first_path,
+        "repeat exports must not reuse a filename"
+    );
+    assert_eq!(fs::read_to_string(&first_path).unwrap(), calendar);
+    assert_eq!(fs::read_to_string(&second_path).unwrap(), calendar);
 
     // Exercise review fixes through real keyboard input, not just AppState helpers.
     ui.send(b"mx");
@@ -1451,7 +1485,7 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
     assert_eq!(disabled["entries"][0]["enabled"], false);
     ui.send(b"e");
     ui.marker("Export failed:");
-    assert_eq!(fs::read_to_string(&output).unwrap(), calendar);
+    assert_eq!(fs::read_to_string(&first_path).unwrap(), calendar);
 
     ui.send(b"\r");
     ui.marker("Edit manual entry");
@@ -1490,7 +1524,8 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
             .contents()
             .contains("Selected classes | 2")
     );
-    assert_eq!(fs::read_to_string(&output).unwrap(), calendar);
+    assert_eq!(fs::read_to_string(&first_path).unwrap(), calendar);
+    assert_eq!(fs::read_to_string(&second_path).unwrap(), calendar);
     ui.send(b"q");
     ui.marker("TERMINAL_RESTORED");
     assert!(ui.child.wait().unwrap().success());
@@ -1500,7 +1535,7 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
             .any(|w| w == b"\x1b[?1049l")
     );
     println!(
-        "TUI_ACCEPTANCE subjects=2 selection_across_search=true multiword_search=true manual_editor=true disabled_edit_preserved=true scope_move_rejected=true stale_export_rejected=true reoptimization=true exact_score={} member_switch=true events={events} no_clobber=true termios_restored=true alternate_screen_restored=true",
+        "TUI_ACCEPTANCE subjects=2 selection_across_search=true multiword_search=true manual_editor=true disabled_edit_preserved=true scope_move_rejected=true stale_export_rejected=true reoptimization=true exact_score={} member_switch=true events={events} timestamped_exports=true termios_restored=true alternate_screen_restored=true",
         reference["solution"]["score"]
     );
 }
@@ -1662,7 +1697,7 @@ fn actual_tui_nested_navigation_cycles_optima_blocks_and_fixed_time_members() {
     ));
     ui.send(b"e");
     ui.marker("Exported");
-    let calendar = fs::read_to_string(&output).unwrap();
+    let calendar = read_latest_export(dir, &output);
     assert!(calendar.contains(&format!("LOCATION:{}", member["room"].as_str().unwrap())));
     assert!(calendar.contains(&format!("T{:02}0000Z", first_time / 60 + 4)));
     ui.send(b"\x1b");

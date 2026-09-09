@@ -21,8 +21,8 @@ fn lines(app: &AppState, width: u16) -> Vec<Line<'static>> {
                         .choices
                         .get(app.result_cursor)
                         .filter(|_| {
-                            app.focus != Focus::Timetable
-                                || app.timetable_navigation.level != Level::Timetables
+                            app.focus == Focus::Timetable
+                                && app.timetable_navigation.level != Level::Timetables
                         })
                         .map(|choice| choice.requirement_id.as_str()),
                     if app.focus == Focus::Timetable

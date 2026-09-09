@@ -53,6 +53,10 @@ fn run_watcher(quit: &[u8], real: bool) {
         path.join("bin/cargo"),
         r#"#!/bin/sh
 echo BUILD_OUTPUT_SHOULD_BE_HIDDEN
+if [ -f hold-build ]; then
+  echo BUILD_WAITING
+  while [ -f hold-build ]; do sleep 0.05; done
+fi
 if grep -q broken src/change.rs; then echo EXPECTED_BUILD_ERROR; exit 1; fi
 mkdir -p target/tui-dev/debug
 cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
@@ -117,16 +121,38 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
         }
     });
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let wait_log = |needle: &str| {
+            let deadline = Instant::now() + Duration::from_secs(180);
+            loop {
+                let log =
+                    fs::read_to_string(path.join("target/tui-dev/build.log")).unwrap_or_default();
+                if log.contains(needle) {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "waiting for log {needle}: {log}");
+                thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let keep_screen = std::cell::Cell::new(false);
         let mut output = String::new();
         let mut until = |needle: &str| {
             let deadline = Instant::now() + Duration::from_secs(if real { 180 } else { 20 });
-            while !output.contains(needle) {
+            let mut screen = vt100::Parser::new(40, 120, 0);
+            while !output.contains(needle) && !screen.screen().contents().contains(needle) {
                 assert!(
                     Instant::now() < deadline,
                     "waiting for {needle} (quit={quit:?}): {output}"
                 );
                 if let Ok(bytes) = rx.recv_timeout(Duration::from_millis(100)) {
+                    screen.process(&bytes);
                     output.push_str(&String::from_utf8_lossy(&bytes));
+                    assert!(!output.contains("[dev-tui]"));
+                    if keep_screen.get() {
+                        assert!(
+                            !output.contains("\x1b[?1049l"),
+                            "old TUI disappeared during build/failure"
+                        );
+                    }
                     assert!(!output.contains("BUILD_OUTPUT_SHOULD_BE_HIDDEN"));
                     assert!(!output.contains("EXPECTED_BUILD_ERROR"));
                     if output.contains("\x1b[6n") {
@@ -144,11 +170,29 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
         } else {
             format!("{original}\n// reload\n")
         };
+        if !real {
+            fs::write(path.join("hold-build"), "").unwrap();
+        }
         fs::write(&watched, edited).unwrap();
-        until("[dev-tui] Building");
+        if !real {
+            wait_log("BUILD_WAITING");
+            keep_screen.set(true);
+            writer.lock().unwrap().write_all(b"?").unwrap();
+            until("Press ? or Esc");
+            writer.lock().unwrap().write_all(b"?").unwrap();
+            until("Partial term");
+            keep_screen.set(false);
+            fs::remove_file(path.join("hold-build")).unwrap();
+        }
         until(if real { "ReloadVerified" } else { "Subjects" });
         fs::write(&watched, "broken").unwrap();
-        until("Build failed.");
+        wait_log("Build failed.");
+        keep_screen.set(true);
+        writer.lock().unwrap().write_all(b"?").unwrap();
+        until("Press ? or Esc");
+        writer.lock().unwrap().write_all(b"?").unwrap();
+        until("Partial term");
+        keep_screen.set(false);
         let log = fs::read_to_string(path.join("target/tui-dev/build.log")).unwrap();
         assert!(
             log.contains(if real {
@@ -160,6 +204,11 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
         );
         fs::write(&watched, &original).unwrap();
         until("Subjects");
+        if !real {
+            fs::write(path.join("hold-build"), "").unwrap();
+            fs::write(&watched, format!("{original}\n// quit while building\n")).unwrap();
+            wait_log("BUILD_WAITING");
+        }
         writer.lock().unwrap().write_all(quit).unwrap();
         writer.lock().unwrap().flush().unwrap();
         until("WATCHER_EXITED");

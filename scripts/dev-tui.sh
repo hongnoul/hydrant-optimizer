@@ -20,6 +20,7 @@ builder=''
 target="$PWD/target/tui-dev"
 mkdir -p "$target"
 build_log="$target/build.log"
+run_dir=$(mktemp -d "$target/session.XXXXXX")
 restore_terminal() {
   stty "$saved_tty" 2>/dev/null || true
   printf '\033[?1000l\033[?1002l\033[?1003l\033[?1015l\033[?1006l\033[?1049l\033[?25h\033[0m'
@@ -40,6 +41,8 @@ cleanup() {
   fi
   stop_child
   restore_terminal
+  rm -f "$run_dir/app"
+  rmdir "$run_dir"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -56,33 +59,35 @@ fingerprint() {
 }
 last=''
 while true; do
-  current=$(fingerprint)
-  if [[ $current != "$last" ]]; then
-    # Debounce an editor/agent's burst of writes.
-    sleep 0.3
-    current=$(fingerprint)
-    last=$current
-    stop_child
-    printf '\n[dev-tui] Building debug TUI...\n'
-    cargo build --locked --bin hydrant-optimizer --target-dir "$target" >"$build_log" 2>&1 &
-    builder=$!
-    if wait "$builder"; then
-      builder=''
-      # Do not start an obsolete build if sources changed while compiling.
-      if [[ $(fingerprint) != "$last" ]]; then continue; fi
-      printf '[dev-tui] Running. Save source files to reload. q quits.\n'
-      "$target/debug/hydrant-optimizer" "$@" <&3 &
-      child=$!
-    else
-      builder=''
-      printf '\n[dev-tui] Build failed. See target/tui-dev/build.log. Save to retry. Ctrl+C quits.\n'
-    fi
-  fi
+  # Honor quit even if a compilation is still running.
   if [[ -n $child ]] && ! kill -0 "$child" 2>/dev/null; then
     code=0
     wait "$child" || code=$?
     child=''
     exit "$code"
   fi
-  sleep 0.5
+  if [[ -n $builder ]] && ! kill -0 "$builder" 2>/dev/null; then
+    code=0
+    wait "$builder" || code=$?
+    builder=''
+    if [[ $code == 0 && $(fingerprint) == "$last" ]]; then
+      stop_child
+      # Never execute the build output directly: linking/copying a new build
+      # must not overwrite the executable still displayed in the terminal.
+      cp "$target/debug/hydrant-optimizer" "$run_dir/app"
+      "$run_dir/app" "$@" <&3 &
+      child=$!
+    elif [[ $code != 0 ]]; then
+      printf '\nBuild failed. Keeping the previous TUI. Save to retry.\n' >> "$build_log"
+    fi
+  fi
+  current=$(fingerprint)
+  if [[ -z $builder && $current != "$last" ]]; then
+    # Debounce an editor/agent's burst of writes.
+    sleep 0.3
+    last=$(fingerprint)
+    cargo build --locked --bin hydrant-optimizer --target-dir "$target" >"$build_log" 2>&1 &
+    builder=$!
+  fi
+  sleep 0.1
 done

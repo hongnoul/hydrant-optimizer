@@ -241,3 +241,34 @@ running pane. That session was left untouched to preserve its selections.
 - Calendar files were parsed independently and checked by date/time assertions. They were not imported into a calendar account or verified in every calendar client.
 - Normal terminal restoration and recovery from export errors were exercised. Forced termination and injected panics were not acceptance-tested. Cancellation semantics were tested at the actual solver API, not with a timed long-running native-terminal workload.
 - Exactness evidence is the independent oracle and explicit edge cases. No broad performance benchmark or claim that this is the fastest solver is made.
+
+## Recurring ICS export acceptance (2026-09-09)
+
+Implementation: `0727362`. Ran the repository's real acceptance entry point,
+`bash scripts/verify-mvp.sh`, successfully (exit 0). This built release binaries,
+installed into an isolated directory, invoked that installed executable with an
+isolated HOME, and ran actual CLI/native-PTY TUI workflows in debug and release.
+All 13 verifier exit checks matched expectations. Evidence for this local run is
+retained at `/Users/justinhong/.jcode/scratch/mvp.tJMthW` (`checks.tsv`, exported
+ICS files, command stdout/stderr, revision and worktree records). Inputs are the
+repository's offline catalog fixtures, not live catalog data.
+
+| Requirement / changed public output | Concrete check and observed result |
+| --- | --- |
+| Related occurrences share a recurring identity | Installed `optimize A B --export` produced **2 VEVENT masters for 6 occurrences**, rather than the previous 6 independent VEVENTs. A Lec has DTSTART `20261026T130000Z` and RDATE `20261103T140000Z,20261109T140000Z`. B Lec likewise has one master and two recurrence dates. |
+| Calendar apps offer group deletion | **Not verified, blocked at client UI access.** Accessibility and Screen Recording permissions were granted. Calendar was initially not running. Launch, reopen, and activate were attempted, but repeated Accessibility inspection returned “Calendar has no open windows.” No file was imported and no deletion prompt was observed. RFC recurrence structure and parser success must not be represented as proof of an Apple/Google Calendar deletion dialog. |
+| Preserve holidays, alternate weekdays, DST | Installed A Lec export includes Oct 26 at 13:00 UTC and alternate-Monday Nov 3 plus Nov 9 at 14:00 UTC, with no holiday Nov 2 occurrence. `calendar_export_enumerates_actual_new_york_dates_holidays_alternates_dst_and_stable_ids` passed with exact occurrence assertions. |
+| Keep distinct course components and PE offerings separate | Installed PE export has **5 masters for 9 occurrences**: A Lec (3), A Rec (1), A Lab (2), PE Q1 (1), PE Q2 (2). PE dates are Oct 26 and Nov 3/9 respectively. The installed verifier checked the counts and timestamps. |
+| Different-duration meetings retain correct ends | `recurrence_groups_weekdays_and_times_but_separates_components_and_durations` passed: one section's different weekdays/times combine when durations match, 90-minute meetings remain separate, and their reconstructed end is 20:30 UTC rather than 20:00. |
+| PE clipping and next-day midnight remain correct | `export_bounded_pe_is_clipped_to_bounds_and_term_with_midnight_handling` passed in debug and release: 2 occurrences in one master, including Nov 4 04:00–05:00 UTC, and no Nov 9 occurrence outside offering bounds. |
+| Stable UIDs, no duplicate occurrences | Deterministic-export and recurrence-group tests passed after reversing meeting/section order and repeating an input section. The entire ICS output remains identical. |
+| Standards-compliant recurrence serialization | Independent `icalendar` parser accepted the emitted master and its RDATE multi-property. The long-term test recovered 16 RDATE starts plus DTSTART, with every folded content line at most 75 octets and unescaped date-list commas. |
+| Public occurrence counts remain unchanged | Actual installed JSON reports `events: 6` and `events: 9` while respective ICS master counts are 2 and 5. Native TUI tests retain 7, 17, and 6 actual occurrences while validating fewer masters. |
+| Existing details, selected rooms, precise times, and file safety | Actual CLI and native TUI tests passed in debug/release, including selected-room export, exact-minute boundaries, timestamped non-overwriting filenames, and infeasible export leaving existing files unchanged. |
+| Migration guidance | README states that existing standalone imports are not converted, advises removing the old import before re-importing, and explicitly qualifies calendar-app deletion prompts. This is documentation, not a tested automatic migration feature. |
+
+Remaining acceptance step: import an installed-binary export into an isolated
+calendar in the intended client, select a later occurrence, invoke Delete, and
+observe the series-level deletion option without confirming deletion of unrelated
+user data. The local application/export workflow passed, but the requested
+calendar-client behavior remains unobserved. No personal calendar data was changed.

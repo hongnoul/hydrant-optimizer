@@ -16,7 +16,7 @@ use chrono::NaiveDate;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers,
+        KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -35,7 +35,7 @@ use crate::{app, model::*, session::SelectionSession, storage};
 mod timetable;
 mod week;
 
-pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, j/k or Down/Up move/scroll within pane, h/l or Left/Right previous/next pane, Space select/remove class, Tab next panel/field, s selected classes, m manual overlay, a add manual, Enter select/remove/edit, x enable-disable manual, c cancel, t timetable (h/l alternatives, Enter blocks, hjkl move, Enter then h/l same-time member, Esc back), PgUp/PgDn scroll active pane, Home/End first/last line, e export, ? help, Ctrl+S save editor";
+pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, j/k or Down/Up move/scroll within pane, h/l or Left/Right previous/next pane, Space select/remove class, Tab next panel/field, click pane to focus, s selected classes, m manual overlay, a add manual, Enter select/remove/edit, x enable-disable manual, c cancel, t timetable (h/l alternatives, Enter blocks, hjkl move, Enter then h/l same-time member, Esc back), PgUp/PgDn scroll active pane, Home/End first/last line, e export, ? help, Ctrl+S save editor";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
@@ -219,6 +219,7 @@ pub struct AppState {
     pub cursor: usize,
     pub selected: BTreeSet<String>,
     pub focus: Focus,
+    focus_regions: Vec<(Rect, Focus)>,
     pub selected_cursor: usize,
     pub manual_cursor: usize,
     pub result_cursor: usize,
@@ -274,6 +275,7 @@ impl AppState {
             cursor: 0,
             selected,
             focus: Focus::Subjects,
+            focus_regions: Vec::new(),
             selected_cursor: 0,
             manual_cursor: 0,
             result_cursor: 0,
@@ -423,6 +425,25 @@ impl AppState {
             .map(|(id, _)| id.clone())
             .collect();
         self.clamp_cursors();
+    }
+
+    /// Focus only: clicking never selects/removes a class or changes a schedule.
+    pub fn handle_mouse(&mut self, event: MouseEvent) {
+        if event.kind != MouseEventKind::Down(MouseButton::Left)
+            || self.show_help
+            || self.editor.is_some()
+            || self.focus == Focus::Manual
+        {
+            return;
+        }
+        let position = ratatui::layout::Position::new(event.column, event.row);
+        if let Some((_, focus)) = self
+            .focus_regions
+            .iter()
+            .find(|(area, _)| area.contains(position))
+        {
+            self.focus = *focus;
+        }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<AppAction> {
@@ -1164,7 +1185,8 @@ pub fn run_with_options(
                         }
                     }
                 }
-                Event::Resize(_, _) => {}
+                Event::Mouse(mouse) => app.handle_mouse(mouse),
+                Event::Resize(_, _) => app.focus_regions.clear(),
                 _ => {}
             }
         }
@@ -1276,6 +1298,13 @@ fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(body[0]);
+    // Hit targets use the actual rendered rectangles, including their borders.
+    app.focus_regions = vec![
+        (root[0], Focus::Search),
+        (lists[0], Focus::Subjects),
+        (lists[1], Focus::Selected),
+        (body[1], Focus::Timetable),
+    ];
     draw_subjects(frame, app, lists[0]);
     draw_selected(frame, app, lists[1]);
     timetable::draw(frame, app, body[1]);
@@ -1522,7 +1551,7 @@ fn draw_footer(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
         } else if app.focus == Focus::Timetable {
             app.timetable_navigation.hint()
         } else {
-            "h/l ←/→ panes | j/k ↑/↓ move | Space select/remove | m manual | q quit"
+            "Click pane to focus | h/l ←/→ panes | j/k ↑/↓ move | Space select/remove | m manual | q quit"
         }),
     ];
     frame.render_widget(
@@ -1548,7 +1577,7 @@ fn draw_help(frame: &mut Frame<'_>, area: Rect) {
         )),
         Line::from(""),
         Line::from("/                  Search subjects. Enter to browse, Ctrl+U to clear."),
-        Line::from("h/l or Left/Right  Previous/next pane. Tab/Shift+Tab also works."),
+        Line::from("h/l or Left/Right  Previous/next pane. Tab/Shift+Tab or click also works."),
         Line::from("j/k or Down/Up     Move within the active pane."),
         Line::from("Space or Enter     Select a subject / remove a selected class."),
         Line::from("a / m              Add manual section / manual overlay (Esc closes)."),
@@ -1767,6 +1796,77 @@ mod viewport_tests {
         state
             .handle_key(KeyEvent::new(code, KeyModifiers::NONE))
             .unwrap();
+    }
+
+    fn click(state: &mut AppState, column: u16, row: u16) {
+        state.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+
+    #[test]
+    fn clicks_focus_rendered_panes_without_changing_selection() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        let selected = state.selected.clone();
+        let generation = state.generation;
+        for (width, height) in [(80, 24), (140, 50), (40, 16)] {
+            render(&mut state, width, height);
+            for (area, focus) in state.focus_regions.clone() {
+                click(&mut state, area.x, area.y);
+                assert_eq!(state.focus, focus, "pane border");
+                click(
+                    &mut state,
+                    area.x + area.width / 2,
+                    area.y + area.height / 2,
+                );
+                assert_eq!(state.focus, focus, "pane interior");
+            }
+            let focus = state.focus;
+            click(&mut state, width - 1, 0);
+            click(&mut state, 0, height - 1);
+            assert_eq!(state.focus, focus, "unused column and footer are inert");
+        }
+        assert_eq!(state.selected, selected);
+        assert_eq!(state.generation, generation);
+        click(&mut state, 1, 1);
+        press(&mut state, KeyCode::Char('A'));
+        assert_eq!(state.query, "A");
+    }
+
+    #[test]
+    fn mouse_focus_respects_overlays_and_ignores_non_click_events() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        render(&mut state, 80, 24);
+        for kind in [
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollDown,
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            state.handle_mouse(MouseEvent {
+                kind,
+                column: 1,
+                row: 1,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert_eq!(state.focus, Focus::Subjects);
+        }
+        state.show_help = true;
+        click(&mut state, 1, 1);
+        assert_eq!(state.focus, Focus::Subjects);
+        state.show_help = false;
+        state.editor = Some(ManualForm::new("A".into()));
+        click(&mut state, 1, 1);
+        assert_eq!(state.focus, Focus::Subjects);
+        state.editor = None;
+        state.focus = Focus::Manual;
+        click(&mut state, 1, 1);
+        assert_eq!(state.focus, Focus::Manual);
     }
 
     #[test]

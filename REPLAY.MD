@@ -1,5 +1,7 @@
 # Whole-result feedback-loop replay
 
+> Historical record: the Results pane was subsequently removed on 2026-09-09. Current navigation has Subjects, Selected classes, and Timetable only. Results-specific assertions and shortcuts below describe the earlier UI. Current coverage includes `subjects_and_selected_share_upper_row_without_results`, `removed_results_shortcuts_do_not_focus_a_hidden_pane`, `actual_tui_timetable_scrolls_and_resets_independently_of_subject_lists`, and `actual_tui_80x24_navigates_sessions_and_exports_with_unknown_subjects`.
+
 ## Scope and execution
 
 This record closes **both** the TUI UX refresh and PE/weekday-calendar goals on the combined application, not on isolated changes. The latest Monday–Friday requirement supersedes the earlier seven-column display requirement. Weekend data must still survive in exact details, optimization, and export.

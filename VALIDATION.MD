@@ -1,5 +1,7 @@
 # Validation record
 
+> Historical record: the Results pane was subsequently removed on 2026-09-09. Current navigation has Subjects, Selected classes, and Timetable only. Results-specific assertions and shortcuts below describe the earlier UI. Current coverage includes `subjects_and_selected_share_upper_row_without_results`, `removed_results_shortcuts_do_not_focus_a_hidden_pane`, `actual_tui_timetable_scrolls_and_resets_independently_of_subject_lists`, and `actual_tui_80x24_navigates_sessions_and_exports_with_unknown_subjects`.
+
 ## Selected classes and separate timetable: 2026-09-09
 
 This refactor supersedes the prior manual-pane/results-owned-calendar layout. The acceptance map below was defined before the complete verifier replay. Native tests execute the real binary through a PTY, including at 80×24.

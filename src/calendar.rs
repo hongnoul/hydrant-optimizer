@@ -15,6 +15,8 @@ pub struct ExportReport {
     pub ics: String,
     pub event_count: usize,
     pub notices: Vec<String>,
+    /// Actual file written: the caller's hint plus a Unix-time suffix, e.g.
+    /// `schedule-1757424600.ics`. The bare hint is never created.
     pub path: std::path::PathBuf,
 }
 

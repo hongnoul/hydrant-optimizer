@@ -190,6 +190,11 @@ fn export_paths_always_carry_unix_time_and_repeat_exports_never_reuse() {
         ),
         std::path::PathBuf::from("exports/my-schedule-1757424600.ics")
     );
+    // A bare filename with no directory lands in the working directory.
+    assert_eq!(
+        app::timestamped_export_path(std::path::Path::new("my-schedule"), 9),
+        std::path::PathBuf::from("./my-schedule-9.ics")
+    );
     let base = dataset();
     let solution = app::optimize(&base, &["B".to_owned()], None).unwrap();
     let temp = tempfile::tempdir().unwrap();

@@ -153,6 +153,18 @@ fn cli(dir: &Path, args: &[&str]) -> Value {
 }
 
 // Exports always gain a Unix-time suffix, so locate the fresh file from its hint.
+// Order by (stamp, counter), not filename: lexicographic sort would rank
+// `stem-9.ics` above `stem-10.ics`.
+fn export_sort_key(path: &Path, stem: &str) -> (u64, u64) {
+    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let suffix = name.strip_prefix(&format!("{stem}-")).unwrap_or("");
+    let (stamp, counter) = match suffix.split_once('-') {
+        Some((stamp, counter)) => (stamp, counter.parse().unwrap_or(0)),
+        None => (suffix, 0),
+    };
+    (stamp.parse().unwrap_or(0), counter)
+}
+
 fn latest_export(dir: &Path, hint: &Path) -> std::path::PathBuf {
     let stem = hint
         .file_stem()
@@ -169,7 +181,7 @@ fn latest_export(dir: &Path, hint: &Path) -> std::path::PathBuf {
                     .is_some_and(|n| n.starts_with(&format!("{stem}-")))
         })
         .collect();
-    matches.sort();
+    matches.sort_by_key(|path| export_sort_key(path, stem));
     matches.pop().expect("expected a timestamped export")
 }
 

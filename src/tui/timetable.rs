@@ -1,10 +1,10 @@
-//! Independent full-width timetable pane. Results scrolling never owns this viewport.
+//! Independent edge-to-edge timetable. Results scrolling never owns this viewport.
 use ratatui::{
     Frame,
     layout::Rect,
     style::{Color, Style},
     text::Line,
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 
 use super::{AppState, Focus, week};
@@ -42,24 +42,36 @@ fn lines(app: &AppState, width: u16) -> Vec<Line<'static>> {
 
 pub(super) fn draw(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
     let active = app.focus == Focus::Timetable;
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(if active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default()
-        })
-        .title(if active { "> Timetable" } else { "Timetable" });
-    let inner = block.inner(area);
-    let paragraph = Paragraph::new(lines(app, inner.width)).wrap(Wrap { trim: false });
+    // Keep a single fixed heading for focus and scrolling, but no parent border
+    // or inset around the grid. Its own table border reaches both screen edges.
+    let header_height = area.height.min(1);
+    let header = Rect::new(area.x, area.y, area.width, header_height);
+    let grid = Rect::new(
+        area.x,
+        area.y.saturating_add(header_height),
+        area.width,
+        area.height.saturating_sub(header_height),
+    );
+    let paragraph = Paragraph::new(lines(app, grid.width)).wrap(Wrap { trim: false });
     let viewport = &mut app.timetable_viewport;
-    viewport.height = inner.height;
-    viewport.max_offset = (paragraph.line_count(inner.width).min(u16::MAX as usize) as u16)
-        .saturating_sub(inner.height);
+    viewport.height = grid.height;
+    viewport.max_offset = (paragraph.line_count(grid.width).min(u16::MAX as usize) as u16)
+        .saturating_sub(grid.height);
     viewport.offset = viewport.offset.min(viewport.max_offset);
-    let block = block.title_bottom(format!(
-        " t focus · PgUp/Dn | {}/{} ",
-        viewport.offset, viewport.max_offset
-    ));
-    frame.render_widget(paragraph.block(block).scroll((viewport.offset, 0)), area);
+    let title = if active { "> Timetable" } else { "Timetable" };
+    frame.render_widget(
+        Line::styled(
+            format!(
+                "{title} · 30-minute rows · t focus · PgUp/Dn | {}/{}",
+                viewport.offset, viewport.max_offset
+            ),
+            if active {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default()
+            },
+        ),
+        header,
+    );
+    frame.render_widget(paragraph.scroll((viewport.offset, 0)), grid);
 }

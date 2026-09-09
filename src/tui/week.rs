@@ -49,7 +49,6 @@ struct Entry {
 struct EntrySet {
     weekdays: Vec<Entry>,
     weekend_count: usize,
-    shortened_other_kinds: bool,
 }
 
 pub(super) fn week_lines(
@@ -63,11 +62,6 @@ pub(super) fn week_lines(
     }
 
     let mut lines = Vec::new();
-    lines.push(plain_line(
-        "Timetable · 30-minute rows (exact times below).",
-        width,
-    ));
-
     let entry_set = entries_from_sections(sections, selected_requirement);
     if entry_set.weekdays.is_empty() {
         if entry_set.weekend_count > 0 {
@@ -79,7 +73,6 @@ pub(super) fn week_lines(
                 &weekend_disclosure(entry_set.weekend_count),
                 width,
             ));
-            lines.push(component_legend_line(width));
             return lines;
         }
         lines.push(plain_line("No weekly meetings to show.", width));
@@ -89,7 +82,7 @@ pub(super) fn week_lines(
 
     let Some(plan) = ColumnPlan::new(width) else {
         lines.push(plain_line(
-            "Width too small for the weekday table. Exact meeting times appear in details below.",
+            "Width too small for the weekday table. Exact meeting times appear in Results.",
             width,
         ));
         if entry_set.weekend_count > 0 {
@@ -110,30 +103,13 @@ pub(super) fn week_lines(
     lines.push(header_line(&plan));
     lines.push(border_line(&plan, '├', '┼', '┤'));
 
-    let mut saw_multiple = false;
     let mut slot = first_slot;
     while slot < last_slot {
-        let (line, multiple) = row_line(&plan, &entries, slot);
-        saw_multiple |= multiple;
-        lines.push(line);
+        lines.push(row_line(&plan, &entries, slot));
         slot = slot.saturating_add(SLOT_MINUTES);
     }
     lines.push(border_line(&plan, '└', '┴', '┘'));
 
-    let mut notes = Vec::new();
-    if saw_multiple {
-        notes.push("2× = multiple meetings in bucket; exact pairs below");
-    }
-    if entries.iter().any(|entry| entry.selected) {
-        notes.push("selected requirement is highlighted");
-    }
-    if entry_set.shortened_other_kinds {
-        notes.push("other component kinds use first 3 chars");
-    }
-    if !notes.is_empty() {
-        lines.push(plain_line(&format!("Legend: {}.", notes.join("; ")), width));
-    }
-    lines.push(component_legend_line(width));
     if entry_set.weekend_count > 0 {
         lines.push(plain_line(
             &weekend_disclosure(entry_set.weekend_count),
@@ -187,8 +163,6 @@ fn entries_from_sections(
             {
                 continue;
             }
-            let (kind, shortened) = component_label(&section.kind);
-            entry_set.shortened_other_kinds |= shortened;
             if meeting.weekday >= WEEKEND_START {
                 entry_set.weekend_count += 1;
                 continue;
@@ -198,7 +172,7 @@ fn entries_from_sections(
                 start: meeting.start_minute,
                 end: meeting.end_minute,
                 course_id: section.course_id.clone(),
-                kind,
+                kind: component_label(&section.kind),
                 section_id: section.section.id.clone(),
                 selected,
                 color,
@@ -230,7 +204,7 @@ fn section_matches_requirement(section: &ChosenSection, requirement: &str) -> bo
     requirement == format!("{}/{}", section.course_id, section.kind)
 }
 
-fn row_line(plan: &ColumnPlan, entries: &[Entry], slot_start: u16) -> (Line<'static>, bool) {
+fn row_line(plan: &ColumnPlan, entries: &[Entry], slot_start: u16) -> Line<'static> {
     let slot_end = slot_start.saturating_add(SLOT_MINUTES).min(24 * 60);
     let mut spans = Vec::with_capacity(DAY_COUNT * 2 + 3);
     spans.push(Span::raw("│"));
@@ -240,7 +214,6 @@ fn row_line(plan: &ColumnPlan, entries: &[Entry], slot_start: u16) -> (Line<'sta
     )));
     spans.push(Span::raw("│"));
 
-    let mut saw_multiple = false;
     for day in 0..DAY_COUNT {
         let occupants: Vec<&Entry> = entries
             .iter()
@@ -248,9 +221,6 @@ fn row_line(plan: &ColumnPlan, entries: &[Entry], slot_start: u16) -> (Line<'sta
                 entry.day == day && intersects(entry.start, entry.end, slot_start, slot_end)
             })
             .collect();
-        if occupants.len() > 1 {
-            saw_multiple = true;
-        }
         let width = plan.day_widths[day];
         if occupants.is_empty() {
             spans.push(Span::raw(pad_cell("·", width)));
@@ -265,7 +235,7 @@ fn row_line(plan: &ColumnPlan, entries: &[Entry], slot_start: u16) -> (Line<'sta
     }
 
     debug_assert_eq!(line_width(&spans), plan.table_width);
-    (Line::from(spans), saw_multiple)
+    Line::from(spans)
 }
 
 fn header_line(plan: &ColumnPlan) -> Line<'static> {
@@ -339,7 +309,7 @@ fn occupant_text(occupants: &[&Entry], width: usize) -> String {
     }
 }
 
-fn component_label(kind: &str) -> (String, bool) {
+fn component_label(kind: &str) -> String {
     let trimmed = kind.trim();
     let normalized = trimmed.to_ascii_lowercase();
     let collapsed = normalized
@@ -347,19 +317,19 @@ fn component_label(kind: &str) -> (String, bool) {
         .filter(|ch| ch.is_ascii_alphanumeric())
         .collect::<String>();
     match collapsed.as_str() {
-        "lecture" | "lec" => ("Lec".to_string(), false),
-        "recitation" | "rec" => ("Rec".to_string(), false),
-        "lab" | "laboratory" => ("Lab".to_string(), false),
-        "pe" | "physicaleducation" => ("PE".to_string(), false),
-        "design" => ("Design".to_string(), false),
-        "" => ("Other".to_string(), false),
+        "lecture" | "lec" => "Lec".to_string(),
+        "recitation" | "rec" => "Rec".to_string(),
+        "lab" | "laboratory" => "Lab".to_string(),
+        "pe" | "physicaleducation" => "PE".to_string(),
+        "design" => "Design".to_string(),
+        "" => "Other".to_string(),
         _ => {
             let mut chars = trimmed.chars().filter(|ch| !ch.is_whitespace());
             let label = chars.by_ref().take(3).collect::<String>();
             if label.is_empty() {
-                ("Other".to_string(), false)
+                "Other".to_string()
             } else {
-                (titlecase_ascii(&label), true)
+                titlecase_ascii(&label)
             }
         }
     }
@@ -403,16 +373,9 @@ fn fit_component_text(prefix: &str, subject: &str, component: &str, width: usize
     format!("{prefix}{fitted_subject}{suffix}")
 }
 
-fn component_legend_line(width: usize) -> Line<'static> {
-    plain_line(
-        "Lec=lecture · Rec=recitation · Lab=lab · PE=physical ed · Design=design",
-        width,
-    )
-}
-
 fn weekend_disclosure(count: usize) -> String {
     let meeting = if count == 1 { "meeting" } else { "meetings" };
-    format!("{count} weekend {meeting} hidden here. See exact times below; export keeps them.")
+    format!("{count} weekend {meeting} hidden here. See Results. Export keeps them.")
 }
 
 fn occupant_style(occupants: &[&Entry]) -> Style {
@@ -572,7 +535,7 @@ mod tests {
             None,
         );
         let rendered = all_text(&lines);
-        assert!(rendered.contains("30-minute rows"));
+        assert!(text(&lines[0]).starts_with('┌'));
         for day in DAYS {
             assert!(rendered.contains(day), "missing {day}");
         }
@@ -602,7 +565,6 @@ mod tests {
             78,
             None,
         );
-        assert!(all_text(&lines).contains("exact times"));
         assert!(all_text(&lines).contains("09:00"));
         assert!(all_text(&lines).contains("09:30"));
         assert!(all_text(&lines).contains("10:00"));
@@ -664,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_meetings_in_one_bucket_show_indicator_and_legend() {
+    fn multiple_meetings_in_one_bucket_keep_indicator_without_legend() {
         let lines = week_lines(
             &[
                 section("6.1200", "lecture", "L1", vec![meeting(0, 540, 555)]),
@@ -675,22 +637,37 @@ mod tests {
         );
         let row = row_text(&lines, "09:00");
         assert!(cell_text(&row, 0).contains("2×"));
-        assert!(all_text(&lines).contains("2× = multiple meetings in bucket; exact pairs below"));
+        assert!(!all_text(&lines).contains("Legend:"));
+        assert!(text(lines.last().unwrap()).starts_with('└'));
     }
 
     #[test]
-    fn short_component_legend_is_complete_at_seventy_eight_columns() {
+    fn grid_has_no_caption_or_legend_even_with_selected_and_shortened_components() {
         let lines = week_lines(
-            &[section("2.00B", "design", "D1", vec![meeting(4, 540, 570)])],
+            &[
+                section("2.00B", "design", "D1", vec![meeting(4, 540, 570)]),
+                section("21W.755", "seminar", "S1", vec![meeting(0, 540, 570)]),
+            ],
             78,
-            None,
+            Some("2.00B/design"),
         );
-        assert!(
-            all_text(&lines).contains(
-                "Lec=lecture · Rec=recitation · Lab=lab · PE=physical ed · Design=design"
-            )
+        assert_eq!(
+            lines.len(),
+            5,
+            "only table borders, header, and one time row"
         );
-        assert!(lines.iter().all(|line| line.width() <= 78));
+        assert!(text(&lines[0]).starts_with('┌'));
+        assert!(text(lines.last().unwrap()).starts_with('└'));
+        for removed in [
+            "Timetable",
+            "Legend:",
+            "Lec=",
+            "highlighted",
+            "first 3 chars",
+        ] {
+            assert!(!all_text(&lines).contains(removed));
+        }
+        assert!(lines.iter().all(|line| line.width() == 78));
     }
 
     #[test]
@@ -722,7 +699,6 @@ mod tests {
 
         let row_0930 = row_text(&lines, "09:30");
         assert!(cell_text(&row_0930, 0).contains("21W.755 Sem"));
-        assert!(all_text(&lines).contains("other component kinds use first 3 chars"));
     }
 
     #[test]
@@ -793,7 +769,6 @@ mod tests {
         assert!(cell.contains("2×Lab/Lec"));
         assert!(!cell.contains("6.1200"));
         assert!(!cell.contains("18.01"));
-        assert!(all_text(&lines).contains("exact pairs below"));
     }
 
     #[test]
@@ -808,9 +783,7 @@ mod tests {
         );
         let rendered = all_text(&lines);
         assert!(
-            rendered.contains(
-                "1 weekend meeting hidden here. See exact times below; export keeps them."
-            )
+            rendered.contains("1 weekend meeting hidden here. See Results. Export keeps them.")
         );
         assert!(rendered.contains("09:00"));
         assert!(!rendered.contains("23:30"));
@@ -831,13 +804,12 @@ mod tests {
         let rendered = all_text(&lines);
         assert!(rendered.contains("no Monday-Friday meetings"));
         assert!(
-            rendered.contains(
-                "2 weekend meetings hidden here. See exact times below; export keeps them."
-            )
+            rendered.contains("2 weekend meetings hidden here. See Results. Export keeps them.")
         );
         assert!(!rendered.contains("│10:00"));
         assert!(!rendered.contains("│23:30"));
         assert!(!rendered.contains("┌"));
+        assert!(!rendered.contains("Lec="));
     }
 
     #[test]

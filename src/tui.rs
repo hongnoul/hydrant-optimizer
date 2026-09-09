@@ -2092,11 +2092,54 @@ mod viewport_tests {
     }
 
     #[test]
+    fn timetable_uses_its_full_width_without_a_parent_box_or_legend() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        for (width, height) in [(37, 12), (80, 24), (120, 40), (170, 55)] {
+            for focus in [Focus::Subjects, Focus::Timetable] {
+                state.focus = focus;
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| timetable::draw(frame, &mut state, frame.area()))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let rows = buffer
+                    .content
+                    .chunks(width as usize)
+                    .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+                    .collect::<Vec<_>>();
+                let active = focus == Focus::Timetable;
+                assert!(rows[0].starts_with(if active { "> Timetable" } else { "Timetable" }));
+                assert!(!rows[0].contains('─'), "heading must not be a box border");
+                assert_eq!(
+                    buffer[(0, 0)].fg,
+                    if active { Color::Cyan } else { Color::Reset }
+                );
+                assert_eq!(buffer[(0, 1)].symbol(), "┌");
+                assert_eq!(buffer[(width - 1, 1)].symbol(), "┐");
+                assert!(rows[2].starts_with("│Time"));
+                assert_eq!(rows[2].matches('│').count(), 7, "no extra parent sides");
+                assert_eq!(state.timetable_viewport.height, height - 1);
+                assert_eq!(state.timetable_viewport.max_offset, 0);
+                let bottom = rows.iter().position(|row| row.starts_with('└')).unwrap();
+                assert!(
+                    rows[bottom + 1..].iter().all(|row| row.trim().is_empty()),
+                    "no legend, parent sides, or bottom border beneath the grid"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn timetable_and_results_scroll_independently_and_reset_on_invalidation() {
         let temp = tempfile::tempdir().unwrap();
         let mut state = fixture_state(temp.path());
         // Long daily span forces a real scroll in the normal 80x24 layout.
-        state.solution.as_mut().unwrap().choices[0].meetings[0].end_minute = 23 * 60;
+        let choice = &mut state.solution.as_mut().unwrap().choices[0];
+        choice.meetings[0].end_minute = 23 * 60;
+        for member in &mut choice.members {
+            member.meetings = choice.meetings.clone();
+        }
         render(&mut state, 80, 24);
         assert!(state.timetable_viewport.max_offset > 0);
         press(&mut state, KeyCode::Char('r'));

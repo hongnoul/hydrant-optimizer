@@ -158,6 +158,20 @@ fn week_row(screen: &str, time: &str) -> Option<Vec<String>> {
 // real terminal's pane boundaries lets scroll checks distinguish Results from
 // the simultaneously visible Timetable instead of matching text anywhere.
 fn pane_contents(screen: &str, title: &str) -> String {
+    if title == "Timetable" {
+        // The timetable has no parent box. Read below its fixed heading until
+        // the footer's border, including the table's own top/bottom borders.
+        let top = screen
+            .lines()
+            .position(|line| line.starts_with("Timetable") || line.starts_with("> Timetable"))
+            .unwrap_or_else(|| panic!("missing timetable heading\n{screen}"));
+        return screen
+            .lines()
+            .skip(top + 1)
+            .take_while(|line| !(line.starts_with('┌') && !line.contains('┬')))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
     let lines: Vec<Vec<char>> = screen.lines().map(|line| line.chars().collect()).collect();
     let (top, left, right) = lines
         .iter()
@@ -421,7 +435,8 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         "·",
         "end boundary must not occupy another bucket"
     );
-    assert!(screen.contains("2× = multiple meetings"));
+    assert!(!screen.contains("Legend:"));
+    assert!(!screen.contains("Lec=lecture"));
     let results = pane_contents(&screen, "Results");
     let timetable = pane_contents(&screen, "Timetable");
     assert!(
@@ -431,7 +446,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     assert_eq!(week_row(&timetable, "Time").unwrap(), headers);
     let timetable_title = screen
         .lines()
-        .position(|line| line.contains("Timetable") && line.contains('┌'))
+        .position(|line| line.starts_with("Timetable") || line.starts_with("> Timetable"))
         .unwrap();
     let subjects_title = screen
         .lines()
@@ -441,13 +456,20 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         timetable_title > subjects_title,
         "Timetable belongs below all three main panes"
     );
-    let border = screen.lines().nth(timetable_title).unwrap();
+    assert!(!screen.lines().nth(timetable_title).unwrap().contains('┌'));
+    let border = screen.lines().nth(timetable_title + 1).unwrap();
     assert!(border.starts_with('┌') && border.ends_with('┐'));
+    assert!(
+        border.contains('┬'),
+        "only the table border, not a parent box"
+    );
     assert_eq!(
         border.chars().count(),
         120,
-        "Timetable must span the terminal width"
+        "The table itself must span the terminal width without an inset"
     );
+    let grid_header = screen.lines().nth(timetable_title + 2).unwrap();
+    assert_eq!(grid_header.matches('│').count(), 7, "no parent box sides");
     println!(
         "UX_OBSERVATION {}",
         serde_json::json!({"requirement":"weekly_grid", "headers":headers, "visible_half_hour_rows":observed_times.len(), "first_row":observed_times.first(), "last_row":observed_times.last(), "monday_shared_bucket":first[1], "all_weekdays_placed":true,"weekend_disclosed":true, "adjacent_meetings_not_conflicts":true})

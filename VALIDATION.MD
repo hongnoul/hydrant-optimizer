@@ -2,9 +2,9 @@
 
 ## TUI UX refresh: 2026-09-09
 
-Implementation commit: **`2cc76fa`**. Verified on **macOS arm64** with `bash scripts/verify-mvp.sh --live`.
+Implementation commit: **`2cc76fa`**. Complete-result replay commit: **`fc79e1e`**. Verified on **macOS arm64** with `bash scripts/verify-mvp.sh --live`.
 
-- **61 local tests passed**, plus **all three opt-in tests**, for **64 passing tests**. Format, strict Clippy, locked release build, release CLI/native-terminal regressions, and isolated installation checks all passed.
+- **62 local tests passed**, plus **all three opt-in tests**, for **65 passing tests**. Format, strict Clippy, locked release build, release CLI/native-terminal regressions, and isolated installation checks all passed.
 - The actual **80×24 release executable** displays a full-width Monday–Sunday table with 30-minute rows. Its native-terminal test exercises the top search bar, both navigation key families, same-time member switching, complete notices, export, and terminal restoration.
 - The live native-terminal workflow still selects subjects, edits manual entries, optimizes, switches members, and exports **113 events**. Stale/duplicate export rejection, disabled-entry preservation, reoptimization, selection across multiword searches, and terminal restoration passed.
 - An isolated installed executable independently exported **113 events** from freshly fetched public Hydrant data. No calendar account or normal user installation was changed.
@@ -31,7 +31,9 @@ The final replay explicitly reruns **the full suite covering this matrix**, not 
 | Section picker, `r`, scrolling, notice count/position | 80×24 PTY plus all viewport regressions | `n` shows member **2/2**. `r`/Home return to the weekly grid, PgUp/PgDn page independently of section selection, and End reaches the final **U9** unresolved and export notices. All 12 source/export notices and long action/output text are reachable in renderer checks. Resize and invalidation clamp/reset scroll offsets. |
 | Exact-time details, rooms, and ICS output | Native seven-day replay through `e`, independent ICS parser | Details retain **09:05–09:20**, **09:35–10:05**, and **23:35–24:00**. Switching members exports the chosen room and **17 events**. Exact UTC boundaries including `20261026T130500Z` and the Sunday-to-Monday midnight ending `20261109T050000Z` are asserted. The 80×24 workflow independently exports **6 events** with **Room A**. |
 | Help and modal/input boundaries | Native help checks, common-size renderer checks, editor/search/help state tests | The new h/l and j/k help entries, paging instructions, member controls, and closing hint fit at **80×24**, **120×32**, and **170×55**. Navigation letters remain editor/search text. Help cannot mutate a hidden pane. |
-| Existing solver/data/CLI/manual/export and terminal safety | Complete `verify-mvp.sh --live` run | This includes every existing oracle, parser, storage, CLI, renderer/state, and native test, all three opt-in tests, strict lint, release build, and isolated installed executable. Live and installed workflows must again produce **113 events**, preserve manual records and overwrite protection, and restore termios/alternate-screen state. |
+| Existing solver/data/CLI/manual/export and terminal safety | Complete `verify-mvp.sh --live` run | Every existing oracle, parser, storage, CLI, renderer/state, and native test, all three opt-in tests, strict lint, release build, and isolated installation passed. Live and installed workflows again produced **113 events**, preserving manual records and overwrite protection and restoring termios/alternate-screen state. |
+
+**Final feedback-loop outcome:** the full post-mapping replay passed on `fc79e1e`: **all 14 verification gates, 62 local tests, and 3 opt-in tests**. The observed before/after improvement above passed in **both debug and release native-terminal runs**, not just a renderer or inspection. The exact-minute fixture exported 17 events, the compact workflow exported 6, and the live/installed workflow exported 113. The verifier's `tests.stdout` and `release-regressions.stdout` contain the per-requirement JSON observations, while `opt-in.stdout` records the preserved live behaviors. No production fixes were needed after this complete replay. This closes the loop for the specified layout/navigation behaviors, without claiming measured user preference or verification on another platform.
 
 Reproduce the comparison as part of the **whole-result** verifier:
 

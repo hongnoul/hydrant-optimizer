@@ -199,6 +199,41 @@ The first real terminal run exposed incorrect driver input: entering another sea
 
 Review also found that CLI manual editing re-enabled disabled records and allowed scope changes. CLI and TUI edits now preserve enabled state and reject scope moves. Final member resolution defensively rejects pairing incompatibilities. Calendar review found the valid `24:00` boundary, line folding, and newline escaping needed correction. New regressions passed after those fixes.
 
+## Pane-width regression observation (2026-09-09)
+
+Native PTY replay compared an independently built pre-fix executable from
+`6d91765` with the current executable. Both selected and optimized the same two
+fixture subjects. The captured terminal output was cropped by one column to
+model the host obscuring its last reported column, matching the reported
+missing-right-border failure mode.
+
+| Reported terminal size | Visible columns | Right-border checks before | Right-border checks after |
+|---|---:|---:|---:|
+| 107×61 | 106 | 0/10 | 10/10 |
+| 80×24 | 79 | 0/10 | 10/10 |
+| 53×24 | 52 | 0/10 | 10/10 |
+
+Checks cover search corners and side, selected-panel corner and side, footer
+corners and side, and timetable corner and side. Before/after text captures
+visibly show open right edges becoming complete `┐`, `│`, and `┘` borders.
+Both selected classes remain present. Every process restored its terminal on
+exit. The normal resize replay additionally preserved all five weekdays while
+shrinking and growing through 107×61, 80×24, 53×24, 170×55, and 107×61.
+
+Reproduce the optional comparison with a pre-fix executable:
+
+```sh
+HYDRANT_PANE_BASELINE_BIN=/path/to/pre-fix/hydrant-optimizer \
+HYDRANT_PANE_EVIDENCE_DIR="$JCODE_SCRATCH_DIR/pane-width-evidence/screens" \
+  cargo test --locked --test tui_acceptance \
+  actual_tui_keeps_container_borders_visible_through_pane_resizes -- --nocapture
+```
+
+The evidence directory contains six before/after terminal captures and
+`observations.json` with the measured counts. This is an actual-executable
+comparison with a modeled host crop, not a new screenshot from the user's
+running pane. That session was left untouched to preserve its selections.
+
 ## Limits of the evidence
 
 - Only macOS arm64 packaging and native terminal behavior were exercised. No Linux, Windows, cross-compilation, or minimum-toolchain result is claimed.

@@ -318,6 +318,114 @@ fn actual_tui_keeps_container_borders_visible_through_pane_resizes() {
     ui.send(b"q");
     ui.marker("TERMINAL_RESTORED");
     assert!(ui.child.wait().unwrap().success());
+    if std::env::var_os("HYDRANT_PANE_BASELINE_BIN").is_some() {
+        compare_visible_borders_with_pre_fix_binary();
+    }
+}
+
+fn compare_visible_borders_with_pre_fix_binary() {
+    let baseline = std::env::var("HYDRANT_PANE_BASELINE_BIN").unwrap();
+    let evidence = std::env::var("HYDRANT_PANE_EVIDENCE_DIR").unwrap();
+    let evidence = Path::new(&evidence);
+    fs::create_dir_all(evidence).unwrap();
+    let mut observations = Vec::new();
+    for (cols, rows) in [(107, 61), (80, 24), (53, 24)] {
+        for (label, binary) in [
+            ("before", baseline.as_str()),
+            ("after", env!("CARGO_BIN_EXE_hydrant-optimizer")),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut ui = Driver::with_binary(
+                binary,
+                temp.path(),
+                &temp.path().join("unused.ics"),
+                rows,
+                cols,
+                &[
+                    "--catalog",
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/catalog.json"),
+                    "--term",
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/term.json"),
+                    "tui",
+                    "--select",
+                    "A",
+                    "--select",
+                    "B",
+                ],
+            );
+            ui.until("selection ready for comparison", |screen| {
+                screen.contains("Preselected 2 subject(s)")
+                    || screen.contains("Optimizing")
+                    || screen.contains("Optimal:")
+            });
+            if ui
+                .screen
+                .screen()
+                .contents()
+                .contains("Preselected 2 subject(s)")
+            {
+                ui.send(b"o");
+            }
+            ui.marker("Optimal:");
+            let screen = ui.screen.screen();
+            let contents = screen.contents();
+            assert!(contents.contains("Selected classes | 2"));
+            let header = contents
+                .lines()
+                .position(|line| line.starts_with("│Time"))
+                .unwrap() as u16;
+            let checks = [
+                (0, "┐"),
+                (1, "│"),
+                (2, "┘"),
+                (3, "┐"),
+                (4, "│"),
+                (rows - 5, "┐"),
+                (rows - 4, "│"),
+                (rows - 1, "┘"),
+                (header - 1, "┐"),
+                (header, "│"),
+            ];
+            // Model the host clipping its last reported column, as in the
+            // screenshot. The executable and terminal output are otherwise real.
+            let visible_borders = checks
+                .iter()
+                .filter(|(row, expected)| {
+                    screen.cell(*row, cols - 2).unwrap().contents() == *expected
+                })
+                .count();
+            let visible = contents
+                .lines()
+                .map(|line| line.chars().take(cols as usize - 1).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n");
+            fs::write(evidence.join(format!("{label}-{cols}x{rows}.txt")), visible).unwrap();
+            let observation = serde_json::json!({
+                "version": label,
+                "terminal_columns": cols,
+                "visible_columns": cols - 1,
+                "rows": rows,
+                "border_checks": checks.len(),
+                "visible_right_borders": visible_borders,
+                "selected_classes": 2,
+                "source": "actual executable in native PTY, final column cropped",
+            });
+            println!("UX_OBSERVATION {observation}");
+            observations.push(observation);
+            assert_eq!(
+                visible_borders,
+                if label == "after" { checks.len() } else { 0 }
+            );
+            ui.send(b"q");
+            ui.marker("TERMINAL_RESTORED");
+            assert!(ui.child.wait().unwrap().success());
+        }
+    }
+    fs::write(
+        evidence.join("observations.json"),
+        serde_json::to_string_pretty(&observations).unwrap(),
+    )
+    .unwrap();
 }
 
 #[test]

@@ -32,16 +32,19 @@ use ratatui::{
 
 use crate::{app, model::*, storage};
 
+mod timetable;
 mod week;
 
-pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, j/k or Down/Up move within pane, h/l or Left/Right previous/next pane, Space select subject, Tab next panel/field, m manual, a add manual, Enter edit/toggle, x enable-disable manual, o optimize/cancel, c cancel, r weekly results, PgUp/PgDn scroll results, Home/End first/last result line, n/p switch same-time member, e export, ? help, Ctrl+S save editor";
+pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, j/k or Down/Up move/scroll within pane, h/l or Left/Right previous/next pane, Space select/remove class, Tab next panel/field, s selected classes, m manual overlay, a add manual, Enter select/remove/edit, x enable-disable manual, o optimize/cancel, c cancel, r results, t timetable, PgUp/PgDn scroll active pane, Home/End first/last line, n/p switch same-time member in results, e export, ? help, Ctrl+S save editor";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
     Subjects,
     Search,
+    Selected,
     Manual,
     Results,
+    Timetable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,14 +190,14 @@ pub enum AppAction {
 }
 
 #[derive(Debug, Default)]
-struct ResultViewport {
+struct ScrollViewport {
     offset: u16,
     max_offset: u16,
     height: u16,
     reveal_member: bool,
 }
 
-impl ResultViewport {
+impl ScrollViewport {
     fn page(&mut self, direction: isize) {
         let step = self.height.saturating_sub(1).max(1) as isize;
         self.offset = (self.offset as usize)
@@ -216,9 +219,11 @@ pub struct AppState {
     pub cursor: usize,
     pub selected: BTreeSet<String>,
     pub focus: Focus,
+    pub selected_cursor: usize,
     pub manual_cursor: usize,
     pub result_cursor: usize,
-    result_viewport: ResultViewport,
+    result_viewport: ScrollViewport,
+    timetable_viewport: ScrollViewport,
     pub editor: Option<ManualForm>,
     pub solution: Option<Solution>,
     pub actual_members: BTreeMap<String, String>,
@@ -265,9 +270,11 @@ impl AppState {
             cursor: 0,
             selected,
             focus: Focus::Subjects,
+            selected_cursor: 0,
             manual_cursor: 0,
             result_cursor: 0,
-            result_viewport: ResultViewport::default(),
+            result_viewport: ScrollViewport::default(),
+            timetable_viewport: ScrollViewport::default(),
             editor: None,
             solution: None,
             actual_members: BTreeMap::new(),
@@ -349,6 +356,10 @@ impl AppState {
         }
 
         match key.code {
+            KeyCode::Esc if self.focus == Focus::Manual => {
+                self.focus = Focus::Selected;
+                Ok(AppAction::None)
+            }
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.should_quit = true;
                 Ok(AppAction::Quit)
@@ -380,6 +391,8 @@ impl AppState {
             KeyCode::PageUp => {
                 if self.focus == Focus::Results {
                     self.result_viewport.page(-1);
+                } else if self.focus == Focus::Timetable {
+                    self.timetable_viewport.page(-1);
                 } else {
                     self.move_cursor(-10);
                 }
@@ -388,29 +401,44 @@ impl AppState {
             KeyCode::PageDown => {
                 if self.focus == Focus::Results {
                     self.result_viewport.page(1);
+                } else if self.focus == Focus::Timetable {
+                    self.timetable_viewport.page(1);
                 } else {
                     self.move_cursor(10);
                 }
                 Ok(AppAction::None)
             }
-            KeyCode::Home | KeyCode::End if self.focus == Focus::Results => {
-                self.result_viewport.offset = if key.code == KeyCode::Home {
+            KeyCode::Home | KeyCode::End
+                if matches!(self.focus, Focus::Results | Focus::Timetable) =>
+            {
+                let viewport = if self.focus == Focus::Timetable {
+                    &mut self.timetable_viewport
+                } else {
+                    &mut self.result_viewport
+                };
+                viewport.offset = if key.code == KeyCode::Home {
                     0
                 } else {
-                    self.result_viewport.max_offset
+                    viewport.max_offset
                 };
-                self.result_viewport.reveal_member = false;
+                viewport.reveal_member = false;
                 Ok(AppAction::None)
             }
             KeyCode::Char(' ') => {
                 if self.focus == Focus::Subjects {
                     self.toggle_current_subject();
+                } else if self.focus == Focus::Selected {
+                    self.remove_current_selected();
                 }
                 Ok(AppAction::None)
             }
             KeyCode::Enter => match self.focus {
                 Focus::Subjects => {
                     self.toggle_current_subject();
+                    Ok(AppAction::None)
+                }
+                Focus::Selected => {
+                    self.remove_current_selected();
                     Ok(AppAction::None)
                 }
                 Focus::Manual => {
@@ -421,13 +449,26 @@ impl AppState {
                     self.cycle_current_member(1);
                     Ok(AppAction::None)
                 }
-                Focus::Search => Ok(AppAction::None),
+                Focus::Search | Focus::Timetable => Ok(AppAction::None),
             },
             KeyCode::Char('o') => Ok(AppAction::OptimizeOrCancel),
             KeyCode::Char('c') => Ok(AppAction::CancelOptimize),
             KeyCode::Char('e') => Ok(AppAction::Export),
+            KeyCode::Char('s') => {
+                self.focus = Focus::Selected;
+                Ok(AppAction::None)
+            }
+            KeyCode::Char('t') => {
+                self.focus = Focus::Timetable;
+                self.timetable_viewport.offset = 0;
+                Ok(AppAction::None)
+            }
             KeyCode::Char('m') => {
-                self.focus = Focus::Manual;
+                self.focus = if self.focus == Focus::Manual {
+                    Focus::Selected
+                } else {
+                    Focus::Manual
+                };
                 Ok(AppAction::None)
             }
             KeyCode::Char('r') => {
@@ -564,7 +605,16 @@ impl AppState {
     }
 
     fn next_focus(&mut self, reverse: bool) {
-        let order = [Focus::Subjects, Focus::Manual, Focus::Results];
+        if self.focus == Focus::Manual {
+            self.focus = Focus::Selected;
+            return;
+        }
+        let order = [
+            Focus::Subjects,
+            Focus::Selected,
+            Focus::Results,
+            Focus::Timetable,
+        ];
         let index = order
             .iter()
             .position(|focus| *focus == self.focus)
@@ -585,6 +635,16 @@ impl AppState {
         match self.focus {
             Focus::Subjects | Focus::Search => {
                 self.cursor = moved_index(self.cursor, self.filtered.len(), delta)
+            }
+            Focus::Selected => {
+                self.selected_cursor =
+                    moved_index(self.selected_cursor, self.selected.len(), delta);
+            }
+            Focus::Timetable => {
+                self.timetable_viewport.offset = (self.timetable_viewport.offset as usize)
+                    .saturating_add_signed(delta)
+                    .min(self.timetable_viewport.max_offset as usize)
+                    as u16;
             }
             Focus::Manual => {
                 self.manual_cursor =
@@ -607,11 +667,30 @@ impl AppState {
         self.invalidate("Selection changed. Press o to optimize.");
     }
 
+    pub fn current_selected(&self) -> Option<&str> {
+        self.selected
+            .iter()
+            .nth(self.selected_cursor)
+            .map(String::as_str)
+    }
+
+    fn remove_current_selected(&mut self) {
+        if let Some(id) = self.current_selected().map(str::to_owned) {
+            self.selected.remove(&id);
+            self.invalidate("Selection changed. Press o to optimize.");
+        }
+    }
+
     pub fn open_add_manual(&mut self) {
         let course = self
             .current_subject()
             .filter(|_| self.focus == Focus::Subjects)
             .map(str::to_owned)
+            .or_else(|| {
+                self.current_selected()
+                    .filter(|_| self.focus == Focus::Selected)
+                    .map(str::to_owned)
+            })
             .or_else(|| self.selected.iter().next().cloned())
             .or_else(|| self.current_subject().map(str::to_owned))
             .or_else(|| self.base.courses.keys().next().cloned())
@@ -769,7 +848,8 @@ impl AppState {
 
     pub fn install_solution(&mut self, solution: Solution) {
         self.result_cursor = 0;
-        self.result_viewport = ResultViewport::default();
+        self.result_viewport = ScrollViewport::default();
+        self.timetable_viewport = ScrollViewport::default();
         self.actual_members.clear();
         self.export = None;
         self.optimize_running = false;
@@ -850,7 +930,8 @@ impl AppState {
 
     fn invalidate(&mut self, message: &str) {
         self.generation = self.generation.wrapping_add(1);
-        self.result_viewport = ResultViewport::default();
+        self.result_viewport = ScrollViewport::default();
+        self.timetable_viewport = ScrollViewport::default();
         self.solution = None;
         self.actual_members.clear();
         self.export = None;
@@ -864,6 +945,7 @@ impl AppState {
         let manual_len = self.manual_visible_len();
         let result_len = self.result_len();
         clamp_index(&mut self.cursor, filtered_len);
+        clamp_index(&mut self.selected_cursor, self.selected.len());
         clamp_index(&mut self.manual_cursor, manual_len);
         clamp_index(&mut self.result_cursor, result_len);
     }
@@ -1032,7 +1114,7 @@ fn start_worker(app: &mut AppState, worker: &mut Option<OptimizeWorker>) {
     ));
     app.optimize_running = true;
     app.solution = None;
-    app.result_viewport = ResultViewport::default();
+    app.result_viewport = ScrollViewport::default();
     app.export = None;
     app.status = "Optimizing in background. Press o or c to cancel.".to_string();
 }
@@ -1082,25 +1164,31 @@ fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
 
     draw_search(frame, app, root[0]);
 
-    // A full-width weekday calendar keeps course and component labels readable.
-    // Catalog and manual entries remain visible above it rather than squeezing
-    // the week into the old, narrow right-hand pane.
+    // Keep the calendar full-width and independently scrollable. Results never
+    // owns the timetable, so paging notices cannot hide the weekly schedule.
     let body = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length((root[1].height / 3).clamp(5, 12)),
-            Constraint::Min(3),
-        ])
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(root[1]);
     let lists = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Percentage(30),
+            Constraint::Percentage(30),
+            Constraint::Percentage(40),
+        ])
         .split(body[0]);
     draw_subjects(frame, app, lists[0]);
-    draw_manual(frame, app, lists[1]);
-    draw_results(frame, app, body[1]);
+    draw_selected(frame, app, lists[1]);
+    draw_results(frame, app, lists[2]);
+    timetable::draw(frame, app, body[1]);
     draw_footer(frame, app, root[2]);
 
+    if app.focus == Focus::Manual {
+        let popup = centered_rect(90, 70, frame.area());
+        frame.render_widget(Clear, popup);
+        draw_manual(frame, app, popup);
+    }
     if app.show_help {
         draw_help(frame, frame.area());
     }
@@ -1159,13 +1247,12 @@ fn draw_search(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
 
 fn draw_subjects(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     let title = format!(
-        "{}Subjects | selected {} | {} found",
+        "{}Subjects | {} found",
         if app.focus == Focus::Subjects {
             "> "
         } else {
             ""
         },
-        app.selected.len(),
         app.filtered.len()
     );
     let items = app
@@ -1206,6 +1293,60 @@ fn draw_subjects(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
             Style::default()
         })
         .title(title);
+    frame.render_stateful_widget(
+        List::new(items)
+            .block(block)
+            .highlight_symbol("> ")
+            .highlight_style(Style::default().fg(Color::Yellow)),
+        area,
+        &mut state,
+    );
+}
+
+fn draw_selected(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
+    let active = app.focus == Focus::Selected;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(if active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        })
+        .title(format!(
+            "{}Selected classes | {}",
+            if active { "> " } else { "" },
+            app.selected.len()
+        ))
+        .title_bottom(" s focus · Space remove ");
+    if app.selected.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No classes selected. Space in Subjects to add.")
+                .wrap(Wrap { trim: false })
+                .block(block),
+            area,
+        );
+        return;
+    }
+    let items = app
+        .selected
+        .iter()
+        .map(|id| {
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{id} "),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(
+                    app.base
+                        .courses
+                        .get(id)
+                        .map(|course| course.title.clone())
+                        .unwrap_or_default(),
+                ),
+            ]))
+        })
+        .collect::<Vec<_>>();
+    let mut state = ListState::default().with_selected(Some(app.selected_cursor));
     frame.render_stateful_widget(
         List::new(items)
             .block(block)
@@ -1258,9 +1399,9 @@ fn draw_manual(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
             Style::default()
         })
         .title(if app.focus == Focus::Manual {
-            "> Manual entries | a add · x toggle"
+            "> Manual entries | a add · x toggle · Esc close"
         } else {
-            "Manual entries | a add · x toggle"
+            "Manual entries | a add · x toggle · Esc close"
         });
     frame.render_stateful_widget(
         List::new(items)
@@ -1272,7 +1413,7 @@ fn draw_manual(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     );
 }
 
-fn result_lines(app: &AppState, width: u16) -> (Vec<Line<'static>>, Option<usize>, usize) {
+fn result_lines(app: &AppState) -> (Vec<Line<'static>>, Option<usize>, usize) {
     let mut lines = Vec::new();
     let mut member_line = None;
     let mut notice_count = 0;
@@ -1283,22 +1424,6 @@ fn result_lines(app: &AppState, width: u16) -> (Vec<Line<'static>>, Option<usize
         )));
     }
     if let Some(solution) = &app.solution {
-        if solution.status == SolveStatus::OptimalKnown {
-            match app::actual_sections(&app.dataset, solution, &app.actual_members) {
-                Ok(sections) => lines.extend(week::week_lines(
-                    &sections,
-                    width,
-                    solution
-                        .choices
-                        .get(app.result_cursor)
-                        .map(|choice| choice.requirement_id.as_str()),
-                )),
-                Err(error) => lines.push(Line::styled(
-                    format!("Cannot render timetable: {error:#}"),
-                    Style::default().fg(Color::Red),
-                )),
-            }
-        }
         lines.push(Line::from(format!("Status: {:?}", solution.status)));
         if let Some(score) = solution.score {
             lines.push(Line::from(format!(
@@ -1416,7 +1541,7 @@ fn result_lines(app: &AppState, width: u16) -> (Vec<Line<'static>>, Option<usize
 }
 
 fn draw_results(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
-    let (lines, member_line, notice_count) = result_lines(app, area.width.saturating_sub(2));
+    let (lines, member_line, notice_count) = result_lines(app);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(if app.focus == Focus::Results {
@@ -1470,13 +1595,15 @@ fn draw_results(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
 fn draw_footer(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     let text = vec![
         Line::from(app.status.clone()),
-        Line::from("/ search  Space select  a add  o optimize  r results  e export  ? help"),
+        Line::from("/ search  s selected  o optimize  r results  t timetable  e export  ? help"),
         Line::from(if app.focus == Focus::Results {
             "h/l ←/→ panes | j/k ↑/↓ section | PgUp/Dn scroll | n/p member"
         } else if app.focus == Focus::Manual {
-            "h/l ←/→ panes | j/k ↑/↓ move | Enter edit | x toggle | q quit"
+            "Enter edit | a add | x toggle | Esc/m close manual entries"
+        } else if app.focus == Focus::Timetable {
+            "h/l ←/→ panes | j/k/PgUp/Dn scroll | Home/End | m manual | q quit"
         } else {
-            "h/l ←/→ panes | j/k ↑/↓ move | Tab panels | m manual | q quit"
+            "h/l ←/→ panes | j/k ↑/↓ move | Space select/remove | m manual | q quit"
         }),
     ];
     frame.render_widget(
@@ -1504,13 +1631,13 @@ fn draw_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from("/                  Search subjects. Enter to browse, Ctrl+U to clear."),
         Line::from("h/l or Left/Right  Previous/next pane. Tab/Shift+Tab also works."),
         Line::from("j/k or Down/Up     Move within the active pane."),
-        Line::from("Space or Enter     Select/deselect the highlighted subject."),
-        Line::from("a / m              Add a manual section / focus manual entries."),
+        Line::from("Space or Enter     Select a subject / remove a selected class."),
+        Line::from("a / m              Add manual section / manual overlay (Esc closes)."),
         Line::from("Enter / x          Edit / enable-disable the selected manual entry."),
         Line::from("o / c              Optimize / cancel background optimization."),
-        Line::from("r                  Focus results and return to the weekly grid."),
-        Line::from("PgUp/PgDn          scroll results: timetable, details, all notices."),
-        Line::from("Home/End           first/last result line."),
+        Line::from("s / r / t          Focus selected classes / results / timetable."),
+        Line::from("PgUp/PgDn          Independently scroll results or timetable."),
+        Line::from("Home/End           First/last line in results or timetable."),
         Line::from("n / p              Switch same-time member for the selected section."),
         Line::from("e                  Export chosen sections to a new local ICS file."),
         Line::from("q / Esc            Quit. Esc closes search, help, or an editor first."),
@@ -1743,6 +1870,22 @@ mod viewport_tests {
             .collect()
     }
 
+    // Exercise the Results widget independently of its sibling calendar. Main
+    // layout and constrained pane interaction are checked separately below.
+    fn render_results(state: &mut AppState, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| draw_results(frame, state, frame.area()))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
     fn press(state: &mut AppState, code: KeyCode) {
         state
             .handle_key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -1753,24 +1896,24 @@ mod viewport_tests {
     fn result_pages_and_member_navigation_keep_independent_positions() {
         let temp = tempfile::tempdir().unwrap();
         let mut state = fixture_state(temp.path());
-        render(&mut state, 80, 24);
+        render_results(&mut state, 80, 24);
         press(&mut state, KeyCode::Char('r'));
-        assert!(render(&mut state, 80, 24).contains("Timetable"));
+        assert!(render_results(&mut state, 80, 24).contains("Status: OptimalKnown"));
         press(&mut state, KeyCode::Up);
         press(&mut state, KeyCode::Down);
-        assert!(render(&mut state, 80, 24).contains("> A/lecture:"));
+        assert!(render_results(&mut state, 80, 24).contains("> A/lecture:"));
         let cursor = state.result_cursor;
         press(&mut state, KeyCode::PageDown);
         let offset = state.result_viewport.offset;
         assert!(offset > 0);
         assert_eq!(state.result_cursor, cursor);
-        render(&mut state, 80, 24);
+        render_results(&mut state, 80, 24);
         assert_eq!(
             state.result_viewport.offset, offset,
             "render must not undo deliberate scrolling"
         );
         press(&mut state, KeyCode::End);
-        assert!(render(&mut state, 80, 24).contains("Notice 11:"));
+        assert!(render_results(&mut state, 80, 24).contains("Notice 11:"));
         assert_eq!(
             state.result_viewport.offset,
             state.result_viewport.max_offset
@@ -1781,14 +1924,14 @@ mod viewport_tests {
             state.result_viewport.max_offset
         );
         press(&mut state, KeyCode::Down);
-        assert!(render(&mut state, 80, 24).contains("> B/lecture:"));
+        assert!(render_results(&mut state, 80, 24).contains("> B/lecture:"));
         press(&mut state, KeyCode::Up);
         press(&mut state, KeyCode::Char('n'));
-        assert!(render(&mut state, 80, 24).contains("(2/2)"));
+        assert!(render_results(&mut state, 80, 24).contains("(2/2)"));
         press(&mut state, KeyCode::Home);
         press(&mut state, KeyCode::PageUp);
         assert_eq!(state.result_viewport.offset, 0);
-        assert!(render(&mut state, 80, 24).contains("Timetable"));
+        assert!(render_results(&mut state, 80, 24).contains("Status: OptimalKnown"));
     }
 
     #[test]
@@ -1797,25 +1940,25 @@ mod viewport_tests {
         let mut state = fixture_state(temp.path());
         // Exercise the real Unicode/word wrapper, not byte-length estimates.
         state.solution.as_mut().unwrap().choices[0].members[0].label = "界α section ".repeat(20);
-        render(&mut state, 80, 24);
+        render_results(&mut state, 80, 24);
         press(&mut state, KeyCode::Char('r'));
         press(&mut state, KeyCode::Up);
         press(&mut state, KeyCode::Down);
-        assert!(render(&mut state, 80, 24).contains("> A/lecture:"));
+        assert!(render_results(&mut state, 80, 24).contains("> A/lecture:"));
         press(&mut state, KeyCode::End);
-        assert!(render(&mut state, 80, 24).contains("Notice 11:"));
+        assert!(render_results(&mut state, 80, 24).contains("Notice 11:"));
         assert!(state.result_viewport.offset > 0);
-        render(&mut state, 200, 160);
+        render_results(&mut state, 200, 160);
         assert_eq!(state.result_viewport.offset, 0);
         assert_eq!(state.result_viewport.max_offset, 0);
-        render(&mut state, 80, 24);
+        render_results(&mut state, 80, 24);
         press(&mut state, KeyCode::End);
         state.focus = Focus::Subjects;
         state.toggle_current_subject();
         assert_eq!(state.result_viewport.offset, 0);
         assert_eq!(state.result_viewport.max_offset, 0);
         assert!(state.solution.is_none());
-        assert!(render(&mut state, 80, 24).contains("No current result."));
+        assert!(render_results(&mut state, 80, 24).contains("No current result."));
     }
 
     #[test]
@@ -1825,18 +1968,18 @@ mod viewport_tests {
         state.solution = None;
         state.dataset.notices = (0..12).map(|i| format!("Source notice {i:02}")).collect();
         state.focus = Focus::Results;
-        render(&mut state, 80, 24);
+        render_results(&mut state, 80, 24);
         press(&mut state, KeyCode::End);
-        assert!(render(&mut state, 80, 24).contains("Source notice 11"));
+        assert!(render_results(&mut state, 80, 24).contains("Source notice 11"));
         state.export = Some(ExportSummary {
             path: state.output.clone(),
             event_count: 0,
             notices: (0..12).map(|i| format!("Omitted section {i:02}")).collect(),
         });
-        render(&mut state, 80, 24);
+        render_results(&mut state, 80, 24);
         press(&mut state, KeyCode::End);
-        assert!(render(&mut state, 80, 24).contains("Export notice: Omitted section 11"));
-        assert_eq!(result_lines(&state, 78).2, 24);
+        assert!(render_results(&mut state, 80, 24).contains("Export notice: Omitted section 11"));
+        assert_eq!(result_lines(&state).2, 24);
         state.status = format!("{}STATUS_END", "Long action message ".repeat(20));
         state.output = temp
             .path()
@@ -1844,7 +1987,7 @@ mod viewport_tests {
         press(&mut state, KeyCode::Home);
         let mut pages = String::new();
         loop {
-            let screen = render(&mut state, 80, 24);
+            let screen = render_results(&mut state, 80, 24);
             assert!(screen.contains("Results | 24 notices"));
             assert!(screen.contains("PgUp/Dn |"));
             pages.push_str(&screen);
@@ -1877,7 +2020,7 @@ mod viewport_tests {
         assert!(screen.contains("09:00"));
         assert!(screen.contains("09:30"));
         press(&mut state, KeyCode::Char('l'));
-        assert!(render(&mut state, 80, 24).contains("> Manual entries"));
+        assert!(render(&mut state, 80, 24).contains("> Selected classes"));
         press(&mut state, KeyCode::Right);
         assert!(render(&mut state, 80, 24).contains("> Results"));
         press(&mut state, KeyCode::Char('/'));
@@ -1889,6 +2032,117 @@ mod viewport_tests {
         assert!(header.contains("hello hjkl"));
         assert!(header.contains("> Search subjects"));
         assert!(screen.contains("0 found"));
+    }
+
+    #[test]
+    fn selected_results_and_timetable_are_separate_visible_panes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        for (width, height) in [(80, 24), (120, 40)] {
+            let screen = render(&mut state, width, height);
+            for title in ["Subjects", "Selected classes", "Results", "Timetable"] {
+                assert!(
+                    screen.contains(title),
+                    "missing {title} at {width}x{height}"
+                );
+            }
+            assert!(!screen.contains("Manual entries"));
+            let result = render_results(&mut state, width, height);
+            assert!(result.contains("Status: OptimalKnown"));
+            assert!(
+                !result.contains("Timetable"),
+                "Results must not own the calendar"
+            );
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| timetable::draw(frame, &mut state, frame.area()))
+                .unwrap();
+            let calendar = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>();
+            for day in ["Mon", "Tue", "Wed", "Thu", "Fri"] {
+                assert!(calendar.contains(day));
+            }
+            assert!(!calendar.contains("Score:"));
+            assert!(!calendar.contains("Notice 11"));
+        }
+        state.query = "nonexistent".into();
+        state.recompute_filter();
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
+        terminal
+            .draw(|frame| draw_selected(frame, &state, frame.area()))
+            .unwrap();
+        let selected = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(selected.contains("A ") && selected.contains("B "));
+        press(&mut state, KeyCode::Char('m'));
+        assert!(render(&mut state, 80, 24).contains("Manual entries"));
+        press(&mut state, KeyCode::Esc);
+        assert!(!render(&mut state, 80, 24).contains("Manual entries"));
+        assert!(!state.should_quit);
+    }
+
+    #[test]
+    fn timetable_and_results_scroll_independently_and_reset_on_invalidation() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        // Long daily span forces a real scroll in the normal 80x24 layout.
+        state.solution.as_mut().unwrap().choices[0].meetings[0].end_minute = 23 * 60;
+        render(&mut state, 80, 24);
+        assert!(state.timetable_viewport.max_offset > 0);
+        press(&mut state, KeyCode::Char('r'));
+        press(&mut state, KeyCode::PageDown);
+        render(&mut state, 80, 24);
+        let result_offset = state.result_viewport.offset;
+        assert!(result_offset > 0);
+        press(&mut state, KeyCode::Char('t'));
+        for key in [KeyCode::Char('j'), KeyCode::Down] {
+            press(&mut state, key);
+        }
+        assert_eq!(state.timetable_viewport.offset, 2);
+        for key in [KeyCode::Char('k'), KeyCode::Up] {
+            press(&mut state, key);
+        }
+        assert_eq!(state.timetable_viewport.offset, 0);
+        press(&mut state, KeyCode::PageDown);
+        assert!(state.timetable_viewport.offset > 0);
+        press(&mut state, KeyCode::End);
+        let timetable_offset = state.timetable_viewport.offset;
+        assert_eq!(timetable_offset, state.timetable_viewport.max_offset);
+        assert_eq!(state.result_viewport.offset, result_offset);
+        press(&mut state, KeyCode::Char('r'));
+        assert_eq!(state.result_viewport.offset, 0);
+        assert_eq!(state.timetable_viewport.offset, timetable_offset);
+        press(&mut state, KeyCode::Char('t'));
+        assert_eq!(state.timetable_viewport.offset, 0);
+        press(&mut state, KeyCode::End);
+        render(&mut state, 200, 160);
+        assert_eq!(
+            state.timetable_viewport.offset, 0,
+            "resize clamps calendar offset"
+        );
+        assert_eq!(state.timetable_viewport.max_offset, 0);
+        render(&mut state, 80, 24);
+        press(&mut state, KeyCode::End);
+        state.focus = Focus::Selected;
+        press(&mut state, KeyCode::Char(' '));
+        assert!(state.solution.is_none());
+        assert_eq!(state.result_viewport.offset, 0);
+        assert_eq!(state.timetable_viewport.offset, 0);
+        assert_eq!(state.timetable_viewport.max_offset, 0);
+        assert!(render(&mut state, 80, 24).contains("No timetable yet"));
+        for (width, height) in [(36, 12), (12, 5), (1, 1), (0, 0)] {
+            render(&mut state, width, height);
+        }
     }
 
     #[test]
@@ -1929,7 +2183,7 @@ mod viewport_tests {
                 "h/l or Left/Right",
                 "j/k or Down/Up",
                 "scroll results",
-                "first/last result line",
+                "First/last line in results or timetable",
                 "Switch same-time member",
                 "Press ? or Esc to close help.",
             ] {

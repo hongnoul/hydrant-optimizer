@@ -1,5 +1,29 @@
 # Validation record
 
+## Selected classes and separate timetable: 2026-09-09
+
+This refactor supersedes the prior manual-pane/results-owned-calendar layout. The acceptance map below was defined before the complete verifier replay. Native tests execute the real binary through a PTY, including at 80×24.
+
+| ID | Requirement | Named checks |
+|---|---|---|
+| S1 | Selected classes replace the permanent Manual entries pane, survive filtering, support removal and clamp selection | `selected_classes_survive_search_and_removal_invalidates_and_clamps`, `selected_results_and_timetable_are_separate_visible_panes`, `actual_tui_selected_classes_survive_search_and_support_remove_reselect` |
+| S2 | Selected-class manual prefill and retained manual editing remain available | `selected_class_prefills_manual_editor_and_manual_overlay_closes_without_quitting`, existing manual state tests, `actual_tui_live_selection_editor_solver_member_switch_export_and_restore` |
+| T1 | Results and full-width timetable are separate simultaneously visible panes | `selected_results_and_timetable_are_separate_visible_panes`, `actual_tui_week_replay_preserves_exact_times_and_records_observations` |
+| T2 | Four-pane focus, independent scroll/reset, resize and stale-result invalidation | `vim_and_arrow_navigation_are_equivalent_in_every_pane`, `timetable_and_results_scroll_independently_and_reset_on_invalidation`, `actual_tui_results_and_timetable_scroll_and_reset_independently` |
+| T3 | Preserve precise weekday/weekend times, components, member switching, notices, exports and terminal restoration | all `tui::week::tests`, `actual_tui_pe_search_selection_labels_and_bounded_export`, `actual_tui_week_replay_preserves_exact_times_and_records_observations`, `actual_tui_80x24_reaches_members_all_notices_and_exports`, all existing calendar/PE/CLI tests |
+| C1 | Discoverable shortcuts and isolated help/search/editor input | `help_shows_all_new_controls_and_close_hint_at_common_sizes`, `navigation_letters_remain_text_in_search_and_editor`, `help_does_not_navigate_or_edit_a_hidden_pane`, README controls and CLI keymap |
+
+**Observed replay:** `RUST_TEST_NOCAPTURE=1 HYDRANT_UX_BASELINE_BIN=… bash scripts/verify-mvp.sh --live` passed all **16 gates**, **92 local tests**, and **3 opt-in tests** on macOS arm64. Evidence: `$JCODE_SCRATCH_DIR/mvp.sCwmBS/`. Debug and release both ran the historical-binary comparison. The release executable and an isolated installation were rebuilt and exercised.
+
+- **S1:** Native input retained A and B while search hid one, removed/reselected classes using both Space and Enter, and kept the main Manual entries pane absent. State checks removed the final class safely, clamped the cursor to zero, and cleared stale solution/member/export data.
+- **S2:** `a` on selected B prefilled B, not the first selected class. `m`, Enter, Escape, Escape edited/cancelled manual data and returned to Selected without quitting or losing two selections. Live persistence, disabled-entry preservation and edit-scope rejection passed.
+- **T1:** Both native and renderer checks located the timetable below all three upper panes, asserted a full-width border, and rejected weekly grid content in Results. The calendar retained exactly five weekday columns and five half-hour rows from 09:00 to 11:00 in the exact-time fixture.
+- **T2:** Actual input traversed Subjects → Selected → Results → Timetable and back. Native checks verified j/k, arrows, paging, Home/End, and independent `r`/`t` resets. Unit checks verified resize clamping and resetting both scroll positions on selection invalidation. Timetable scrolling did not move Results, and scrolling Results did not move the timetable.
+- **T3:** The exact-time replay exported 17 events retaining minute and Sunday-midnight boundaries. At 80×24, the member picker reached 2/2, all U9 notices remained reachable, and six events used Room A. PE exported seven fixture events with one bounded PE event. Live discovery found 38 PE offerings, and seven live PE events stayed within Sep 22–Nov 10. The original live/installed workflow still exported 113 events with terminal restoration and no-clobber checks intact.
+- **C1:** Help, top search, new shortcuts as ordinary editor/search text, reverse Tab navigation, and modal isolation all passed. README, architecture notes, footer/help and CLI keymap describe the new layout.
+
+Earlier sections below are historical records, not descriptions of this new layout.
+
 ## Whole-result replay of both goals
 
 [REPLAY.MD](REPLAY.MD) records the fresh post-mapping replay of **TUI UX refresh** and **PE and weekday calendar** together on `1a7f9fc`. All **23 requirement groups and 87 named check/evidence pairs** passed against the new logs. The entire 16-gate live verifier ran, including actual historical/current terminal comparison in debug and release. The report names each check and records its observed public output, rather than relying on aggregate test totals. The historical 0-column display became the requested five-column table, the query moved into the top bar, and identical pane-navigation input stopped deselecting a subject. Every PE, date, export, component-label, and preservation check was replayed over the same complete result.

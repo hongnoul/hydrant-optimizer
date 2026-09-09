@@ -44,27 +44,28 @@ Use `./target/release/hydrant-optimizer` in place of `hydrant-optimizer` unless 
 | Key | Action |
 |---|---|
 | `/` | Focus the top search bar. Ctrl+U clears the query. Type a number/title, then Enter to return to the list. |
-| Up/Down or `k`/`j` | Move through the focused list. Space/Enter toggles a subject. |
-| Left/Right or `h`/`l` | Focus the previous/next pane: Subjects, Manual, Results. The active pane has a cyan border and `>` title marker. |
-| Tab / Shift+Tab | Cycle Subjects, Manual, Results panels. |
-| `a` / `m` | Add a manual section / focus retained manual entries. |
+| Up/Down or `k`/`j` | Move through the focused list, or scroll the timetable. Space/Enter adds a subject or removes a selected class. |
+| Left/Right or `h`/`l` | Focus the previous/next pane: Subjects, Selected classes, Results, Timetable. The active pane has a cyan border and `>` title marker. |
+| Tab / Shift+Tab | Cycle Subjects, Selected classes, Results, Timetable panels. |
+| `s` | Focus Selected classes. This list stays visible independently of the search filter. |
+| `a` / `m` | Add a manual section for the highlighted class / open retained manual entries in an overlay. Escape or `m` closes the overlay. |
 | Enter / `x` in Manual | Edit an entry / toggle enabled state. |
 | `o` | Optimize in the background, or cancel an already running search. |
 | `c` | Cancel a running search. No optimum is claimed for cancelled work. |
-| `r` | Focus results and return to the top of the weekly calendar. |
+| `r` / `t` | Focus Results / Timetable and reset only that pane to its top. |
 | `n`/`p` in Results | Switch an interchangeable actual section and reveal its label/room. Up/Down or `k`/`j` chooses the component. |
-| PgUp/PgDn in Results | Scroll the timetable, section picker, notices, and export details. |
-| Home/End in Results | Jump to the first/last result line. Up/Down selects a section and keeps it visible. |
+| PgUp/PgDn in Results or Timetable | Scroll the focused pane independently. Results contains exact details, the section picker, notices, and export details. |
+| Home/End in Results or Timetable | Jump to the first/last line in that pane. In Results, Up/Down selects a section and keeps it visible. |
 | `e` | Export the chosen sections to `--output`. |
-| `?` / `q` | Help / quit. Escape closes search, help, or an editor first. Otherwise it quits. |
+| `?` / `q` | Help / quit. Escape closes search, help, an editor, or the manual overlay first. Otherwise it quits. |
 
 The manual editor's fields are Subject, Component, Section label, Meetings, Room, Start date, End date. Tab/Shift+Tab changes fields, Ctrl+U clears one, Enter or Ctrl+S saves, and Escape cancels. Enter multiple meetings separated by semicolons. Selection survives catalog searches. Selection or manual changes invalidate the previous timetable until re-optimization.
 
 The top search bar replaces the old status panel. Navigation letters remain ordinary text while searching or editing. Action feedback stays in the footer and the scrollable results details.
 
-Optimized schedules appear in a **full-width weekly table**, with **Monday–Friday columns and 30-minute rows**, spanning the earliest through latest chosen weekday meetings. Colored cells show subject numbers and components: **Lec**, **Rec**, **Lab**, **PE**, or another component label. Narrow cells shorten the subject number before the component. Exact times, full component names, section labels, and rooms are listed below. Off-grid meetings occupy each intersecting half-hour cell without changing their actual times. A `2×` (or higher) marker indicates multiple meetings sharing a half-hour cell, not necessarily a scheduling conflict. Crowded cells retain a component summary rather than suggesting incorrect subject/component pairings. Weekend meetings are explicitly disclosed outside the grid and remain in optimization, exact details, and export.
+Subjects, Selected classes, and Results share the upper row. Optimized schedules appear below them in a **separate full-width Timetable pane**, with **Monday–Friday columns and 30-minute rows**, spanning the earliest through latest chosen weekday meetings. Colored cells show subject numbers and components: **Lec**, **Rec**, **Lab**, **PE**, or another component label. Narrow cells shorten the subject number before the component. Exact times, full component names, section labels, and rooms are listed in Results. Off-grid meetings occupy each intersecting half-hour cell without changing their actual times. A `2×` (or higher) marker indicates multiple meetings sharing a half-hour cell, not necessarily a scheduling conflict. Crowded cells retain a component summary rather than suggesting incorrect subject/component pairings. Weekend meetings are explicitly disclosed outside the grid and remain in optimization, exact details, and export.
 
-Results are scrollable at **80×24**, including all unresolved-time, source/cache, and export notices. The results heading shows the notice count, and the bottom border shows the scroll position. Long action messages and output paths remain available in the scrollable view.
+Results and Timetable have independent scroll positions at **80×24**, so paging through result notices never scrolls away the calendar. Results retains all unresolved-time, source/cache, and export notices. The results heading shows the notice count, and the bottom border shows the scroll position. Long action messages and output paths remain available in the scrollable view.
 
 ### PE classes
 

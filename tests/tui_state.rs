@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::NaiveDate;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use hydrant_optimizer::{
+    app,
     model::*,
     tui::{AppAction, AppState, EditorField, Focus},
 };
@@ -331,13 +332,20 @@ fn vim_and_arrow_navigation_are_equivalent_in_every_pane() {
         }),
         unresolved: Vec::new(),
     });
-    for focus in [Focus::Subjects, Focus::Manual, Focus::Results] {
+    state.selected.extend(["A".to_string(), "B".to_string()]);
+    for focus in [
+        Focus::Subjects,
+        Focus::Selected,
+        Focus::Manual,
+        Focus::Results,
+    ] {
         state.focus = focus;
         let cursor = |state: &AppState| match focus {
             Focus::Subjects => state.cursor,
             Focus::Manual => state.manual_cursor,
             Focus::Results => state.result_cursor,
-            Focus::Search => unreachable!(),
+            Focus::Selected => state.selected_cursor,
+            Focus::Search | Focus::Timetable => unreachable!(),
         };
         assert_eq!(cursor(&state), 0);
         for (down, up) in [
@@ -353,13 +361,24 @@ fn vim_and_arrow_navigation_are_equivalent_in_every_pane() {
     for (left, right) in [
         (KeyCode::Char('h'), KeyCode::Right),
         (KeyCode::Left, KeyCode::Char('l')),
+        (KeyCode::BackTab, KeyCode::Tab),
     ] {
         state.focus = Focus::Subjects;
-        for focus in [Focus::Manual, Focus::Results, Focus::Subjects] {
+        for focus in [
+            Focus::Selected,
+            Focus::Results,
+            Focus::Timetable,
+            Focus::Subjects,
+        ] {
             state.handle_key(key(right)).unwrap();
             assert_eq!(state.focus, focus);
         }
-        for focus in [Focus::Results, Focus::Manual, Focus::Subjects] {
+        for focus in [
+            Focus::Timetable,
+            Focus::Results,
+            Focus::Selected,
+            Focus::Subjects,
+        ] {
             state.handle_key(key(left)).unwrap();
             assert_eq!(state.focus, focus);
         }
@@ -375,19 +394,19 @@ fn navigation_letters_remain_text_in_search_and_editor() {
     let temp = TempDir::new().unwrap();
     let mut state = state(&temp, Vec::new());
     state.handle_key(key(KeyCode::Char('/'))).unwrap();
-    for c in "hjkl".chars() {
+    for c in "hjklstm".chars() {
         state.handle_key(key(KeyCode::Char(c))).unwrap();
     }
-    assert_eq!(state.query, "hjkl");
+    assert_eq!(state.query, "hjklstm");
     assert_eq!(state.focus, Focus::Search);
     state.handle_key(key(KeyCode::Esc)).unwrap();
     assert!(!state.should_quit);
     state.open_add_manual();
     state.editor.as_mut().unwrap().course_id.clear();
-    for c in "hjkl".chars() {
+    for c in "hjklstm".chars() {
         state.handle_key(key(KeyCode::Char(c))).unwrap();
     }
-    assert_eq!(state.editor.as_ref().unwrap().course_id, "hjkl");
+    assert_eq!(state.editor.as_ref().unwrap().course_id, "hjklstm");
 }
 
 #[test]
@@ -395,7 +414,7 @@ fn help_does_not_navigate_or_edit_a_hidden_pane() {
     let temp = TempDir::new().unwrap();
     let mut state = state(&temp, Vec::new());
     state.handle_key(key(KeyCode::Char('?'))).unwrap();
-    for c in "hjkl aoe".chars() {
+    for c in "hjkl aoestm".chars() {
         assert_eq!(
             state.handle_key(key(KeyCode::Char(c))).unwrap(),
             AppAction::None
@@ -409,4 +428,67 @@ fn help_does_not_navigate_or_edit_a_hidden_pane() {
     state.handle_key(key(KeyCode::Esc)).unwrap();
     assert!(!state.show_help);
     assert!(!state.should_quit);
+}
+
+#[test]
+fn selected_classes_survive_search_and_removal_invalidates_and_clamps() {
+    let temp = TempDir::new().unwrap();
+    let mut state = state(&temp, vec!["A".into(), "B".into()]);
+    let solution = app::optimize(&state.dataset, &state.selected_subjects(), None).unwrap();
+    state.install_solution(solution);
+    state.query = "no matching class".into();
+    state.recompute_filter();
+    assert!(state.filtered.is_empty());
+    state.handle_key(key(KeyCode::Char('s'))).unwrap();
+    assert_eq!(state.focus, Focus::Selected);
+    assert_eq!(state.current_selected(), Some("A"));
+    state.handle_key(key(KeyCode::Down)).unwrap();
+    assert_eq!(state.current_selected(), Some("B"));
+    state.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(state.selected_subjects(), vec!["A"]);
+    assert_eq!(state.selected_cursor, 0);
+    assert!(state.solution.is_none());
+    assert!(state.actual_members.is_empty());
+    assert!(state.export.is_none());
+    state.handle_key(key(KeyCode::Char(' '))).unwrap();
+    assert!(state.selected.is_empty());
+    assert_eq!(state.current_selected(), None);
+    let generation = state.generation;
+    for code in [
+        KeyCode::Down,
+        KeyCode::Up,
+        KeyCode::Enter,
+        KeyCode::Char(' '),
+    ] {
+        state.handle_key(key(code)).unwrap();
+    }
+    assert_eq!(state.selected_cursor, 0);
+    assert_eq!(
+        state.generation, generation,
+        "empty selection actions must be no-ops"
+    );
+}
+
+#[test]
+fn selected_class_prefills_manual_editor_and_manual_overlay_closes_without_quitting() {
+    let temp = TempDir::new().unwrap();
+    let mut state = state(&temp, vec!["A".into(), "B".into()]);
+    state.handle_key(key(KeyCode::Char('s'))).unwrap();
+    state.handle_key(key(KeyCode::Down)).unwrap();
+    state.handle_key(key(KeyCode::Char('a'))).unwrap();
+    assert_eq!(state.editor.as_ref().unwrap().course_id, "B");
+    state.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(state.focus, Focus::Selected);
+    state.handle_key(key(KeyCode::Char('m'))).unwrap();
+    assert_eq!(state.focus, Focus::Manual);
+    state.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(state.focus, Focus::Selected);
+    assert!(!state.should_quit);
+    assert_eq!(state.selected_subjects(), vec!["A", "B"]);
+    state.handle_key(key(KeyCode::Char('m'))).unwrap();
+    state.handle_key(key(KeyCode::Char('m'))).unwrap();
+    assert_eq!(state.focus, Focus::Selected);
+    state.handle_key(key(KeyCode::Char('m'))).unwrap();
+    state.handle_key(key(KeyCode::Tab)).unwrap();
+    assert_eq!(state.focus, Focus::Selected);
 }

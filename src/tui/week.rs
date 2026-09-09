@@ -240,7 +240,16 @@ fn row_line(plan: &ColumnPlan, entries: &[Entry], slot_start: u16) -> Line<'stat
         if occupants.is_empty() {
             spans.push(Span::raw(pad_cell("·", width)));
         } else {
-            let text = occupant_text(&occupants, width);
+            let starts: Vec<&Entry> = occupants
+                .iter()
+                .copied()
+                .filter(|entry| entry.start >= slot_start)
+                .collect();
+            let text = if starts.is_empty() {
+                String::new()
+            } else {
+                occupant_text(&starts, width)
+            };
             spans.push(Span::styled(
                 pad_cell(&text, width),
                 occupant_style(&occupants),
@@ -625,7 +634,11 @@ mod tests {
         let row_1030 = row_text(&lines, "10:30");
         assert_eq!(cell_text(&row_1000, 0).trim(), "·");
         assert!(cell_text(&row_1000, 2).contains("6.1200"));
-        assert!(cell_text(&row_1030, 2).contains("6.1200"));
+        assert_eq!(cell_text(&row_1030, 2).trim(), "");
+        assert_eq!(
+            lines[row_index(&lines, "10:00")].spans[7].style,
+            lines[row_index(&lines, "10:30")].spans[7].style
+        );
     }
 
     #[test]
@@ -654,7 +667,7 @@ mod tests {
             None,
         );
         assert!(cell_text(&row_text(&lines, "09:00"), 1).contains("7.012"));
-        assert!(cell_text(&row_text(&lines, "09:30"), 1).contains("7.012"));
+        assert_eq!(cell_text(&row_text(&lines, "09:30"), 1).trim(), "");
         assert!(!all_text(&lines).contains("09:01"));
         assert!(!all_text(&lines).contains("09:59"));
     }
@@ -816,9 +829,7 @@ mod tests {
             None,
         );
         let rendered = all_text(&lines);
-        assert!(
-            rendered.contains("1 weekend meeting hidden here. Export keeps them.")
-        );
+        assert!(rendered.contains("1 weekend meeting hidden here. Export keeps them."));
         assert!(rendered.contains("09:00"));
         assert!(!rendered.contains("23:30"));
         assert!(!rendered.contains("Sat"));
@@ -837,9 +848,7 @@ mod tests {
         );
         let rendered = all_text(&lines);
         assert!(rendered.contains("no Monday-Friday meetings"));
-        assert!(
-            rendered.contains("2 weekend meetings hidden here. Export keeps them.")
-        );
+        assert!(rendered.contains("2 weekend meetings hidden here. Export keeps them."));
         assert!(!rendered.contains("│10:00"));
         assert!(!rendered.contains("│23:30"));
         assert!(!rendered.contains("┌"));

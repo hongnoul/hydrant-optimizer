@@ -754,3 +754,32 @@ fn calendar_embeds_nth_distinct_color_matching_the_tui() {
     let parsed: icalendar::Calendar = report.ics.parse().unwrap();
     assert_eq!(parsed.events().count(), report.event_count);
 }
+
+#[test]
+fn calendar_always_emits_location_with_room_or_tba_like_hydrant() {
+    let calendar = TermCalendar {
+        start: date("2026-10-26"),
+        end: date("2026-10-26"),
+        holidays: Default::default(),
+        alternate_days: Default::default(),
+    };
+    let mut with_room = chosen_for("B", 0);
+    with_room.section.room = "34-304".to_string();
+    let mut tba = chosen_for("A", 0);
+    tba.course_id = "TBA-101".to_string();
+    tba.section.room = "   ".to_string();
+    // Same Monday slot: both export (overlap is allowed at export; the
+    // optimizer prevents it). Distinct courses keep assertions unambiguous.
+    let report = calendar::export_ics(&calendar, &[with_room, tba]).unwrap();
+    assert_eq!(report.event_count, 2);
+    let unfolded = report.ics.replace("\r\n ", "");
+    assert!(
+        unfolded.contains("LOCATION:34-304"),
+        "room number must be in LOCATION:\n{unfolded}"
+    );
+    assert!(
+        unfolded.contains("LOCATION:TBA"),
+        "missing rooms must still emit LOCATION:TBA like Hydrant:\n{unfolded}"
+    );
+    assert_eq!(unfolded.matches("LOCATION:").count(), 2);
+}

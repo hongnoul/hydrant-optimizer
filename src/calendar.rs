@@ -15,6 +15,7 @@ pub struct ExportReport {
     pub ics: String,
     pub event_count: usize,
     pub notices: Vec<String>,
+    pub path: std::path::PathBuf,
 }
 
 pub fn export_ics(calendar: &TermCalendar, chosen: &[ChosenSection]) -> Result<ExportReport> {
@@ -128,6 +129,7 @@ pub fn export_ics(calendar: &TermCalendar, chosen: &[ChosenSection]) -> Result<E
         ics: render_calendar(&events),
         event_count,
         notices,
+        path: std::path::PathBuf::new(),
     })
 }
 
@@ -246,9 +248,16 @@ fn render_calendar(events: &[Event]) -> String {
         text.push_str(&event.end);
         text.push_str("\r\n");
         push_property(&mut text, "SUMMARY", &event.summary);
-        if !event.location.trim().is_empty() {
-            push_property(&mut text, "LOCATION", &event.location);
-        }
+        // MIT Hydrant always emits LOCATION (its `event.room` may be empty),
+        // so Google/Apple Calendar show a location field consistently instead
+        // of hiding it for TBA sections. Fall back to "TBA" only when no
+        // room is known; otherwise preserve the raw room string verbatim.
+        let location = if event.location.trim().is_empty() {
+            "TBA".to_string()
+        } else {
+            event.location.clone()
+        };
+        push_property(&mut text, "LOCATION", &location);
         push_property(&mut text, "DESCRIPTION", &event.description);
         // RFC 7986 display color. Apple Calendar honors it; Google Calendar
         // ignores per-event colors on ICS import (events take the calendar

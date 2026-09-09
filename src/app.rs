@@ -122,6 +122,10 @@ pub fn actual_sections(
 }
 
 pub fn timestamped_export_path(hint: &Path, stamp: u64) -> PathBuf {
+    timestamped_export_path_with_suffix(hint, &stamp.to_string())
+}
+
+fn timestamped_export_path_with_suffix(hint: &Path, suffix: &str) -> PathBuf {
     let parent = hint
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -137,7 +141,7 @@ pub fn timestamped_export_path(hint: &Path, stamp: u64) -> PathBuf {
         .and_then(|e| e.to_str())
         .filter(|e| !e.is_empty())
         .unwrap_or("ics");
-    parent.join(format!("{stem}-{stamp}.{extension}"))
+    parent.join(format!("{stem}-{suffix}.{extension}"))
 }
 
 pub fn write_calendar(
@@ -172,17 +176,7 @@ pub fn write_calendar(
         } else {
             format!("{stamp}-{attempt}")
         };
-        let stem = hint
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .filter(|s| !s.is_empty())
-            .unwrap_or("schedule");
-        let extension = hint
-            .extension()
-            .and_then(|e| e.to_str())
-            .filter(|e| !e.is_empty())
-            .unwrap_or("ics");
-        let path = parent.join(format!("{stem}-{suffix}.{extension}"));
+        let path = timestamped_export_path_with_suffix(hint, &suffix);
         let mut temp = tempfile::NamedTempFile::new_in(parent)
             .with_context(|| format!("cannot create output in {}", parent.display()))?;
         temp.write_all(report.ics.as_bytes())?;

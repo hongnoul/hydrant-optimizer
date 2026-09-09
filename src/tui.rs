@@ -32,7 +32,9 @@ use ratatui::{
 
 use crate::{app, model::*, storage};
 
-pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, Up/Down move, Space select subject, Tab next panel/field, m manual, a add manual, Enter edit/toggle, x enable-disable manual, o optimize/cancel, c cancel, r results, PgUp/PgDn scroll results, Home/End first/last result line, n/p or Left/Right switch same-time member, e export, ? help, Ctrl+S save editor";
+mod week;
+
+pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, j/k or Down/Up move within pane, h/l or Left/Right previous/next pane, Space select subject, Tab next panel/field, m manual, a add manual, Enter edit/toggle, x enable-disable manual, o optimize/cancel, c cancel, r weekly results, PgUp/PgDn scroll results, Home/End first/last result line, n/p switch same-time member, e export, ? help, Ctrl+S save editor";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
@@ -330,7 +332,11 @@ impl AppState {
                     self.show_help = false;
                     return Ok(AppAction::None);
                 }
-                _ => {}
+                KeyCode::Char('q') => {
+                    self.should_quit = true;
+                    return Ok(AppAction::Quit);
+                }
+                _ => return Ok(AppAction::None),
             }
         }
 
@@ -426,7 +432,8 @@ impl AppState {
             }
             KeyCode::Char('r') => {
                 self.focus = Focus::Results;
-                self.result_viewport.reveal_member = true;
+                self.result_viewport.offset = 0;
+                self.result_viewport.reveal_member = false;
                 Ok(AppAction::None)
             }
             KeyCode::Char('a') => {
@@ -440,13 +447,21 @@ impl AppState {
                     Ok(AppAction::None)
                 }
             }
-            KeyCode::Left | KeyCode::Char('p') => {
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.next_focus(true);
+                Ok(AppAction::None)
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.next_focus(false);
+                Ok(AppAction::None)
+            }
+            KeyCode::Char('p') => {
                 if self.focus == Focus::Results {
                     self.cycle_current_member(-1);
                 }
                 Ok(AppAction::None)
             }
-            KeyCode::Right | KeyCode::Char('n') => {
+            KeyCode::Char('n') => {
                 if self.focus == Focus::Results {
                     self.cycle_current_member(1);
                 }
@@ -564,9 +579,6 @@ impl AppState {
             (index + 1) % order.len()
         };
         self.focus = order[next];
-        if self.focus == Focus::Results {
-            self.result_viewport.reveal_member = true;
-        }
     }
 
     fn move_cursor(&mut self, delta: isize) {
@@ -1039,42 +1051,30 @@ fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Min(12),
+            Constraint::Min(0),
             Constraint::Length(5),
         ])
         .split(frame.area());
 
-    let title = format!(
-        "Hydrant Optimizer | term {} | selected {} | {}",
-        app.base.term_id,
-        app.selected.len(),
-        if app.optimize_running {
-            "optimizing"
-        } else {
-            "idle"
-        }
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![Span::styled(
-            title,
-            Style::default().add_modifier(Modifier::BOLD),
-        )]))
-        .block(Block::default().borders(Borders::ALL).title("Status")),
-        root[0],
-    );
+    draw_search(frame, app, root[0]);
 
+    // A full-width calendar keeps all seven days readable at 80 columns.
+    // Catalog and manual entries remain visible above it rather than squeezing
+    // the week into the old, narrow right-hand pane.
     let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-        .split(root[1]);
-    draw_subjects(frame, app, body[0]);
-
-    let right = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
-        .split(body[1]);
-    draw_manual(frame, app, right[0]);
-    draw_results(frame, app, right[1]);
+        .constraints([
+            Constraint::Length((root[1].height / 3).clamp(5, 12)),
+            Constraint::Min(3),
+        ])
+        .split(root[1]);
+    let lists = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(body[0]);
+    draw_subjects(frame, app, lists[0]);
+    draw_manual(frame, app, lists[1]);
+    draw_results(frame, app, body[1]);
     draw_footer(frame, app, root[2]);
 
     if app.show_help {
@@ -1085,19 +1085,65 @@ fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     }
 }
 
-fn draw_subjects(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
-    let title = if app.focus == Focus::Search {
-        format!("Subjects search: {}_", app.query)
-    } else {
-        format!(
-            "Subjects (/ search: {})",
-            if app.query.is_empty() {
-                "all"
+fn draw_search(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
+    let active = app.focus == Focus::Search && app.editor.is_none() && !app.show_help;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(if active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        })
+        .title(format!(
+            "{}Search subjects | {}",
+            if active { "> " } else { "" },
+            if active {
+                "Enter to browse · Ctrl+U clear"
             } else {
-                &app.query
+                "/ to type"
             }
+        ))
+        .title_bottom(format!(" {} ", app.base.term_id));
+    let inner = block.inner(area);
+    let text = if app.query.is_empty() && !active {
+        Line::styled(
+            "Search by course number or title…",
+            Style::default().fg(Color::DarkGray),
         )
+    } else {
+        Line::from(app.query.clone())
     };
+    let width = text.width();
+    let scroll = if app.query.is_empty() {
+        0
+    } else {
+        width
+            .saturating_sub(inner.width.saturating_sub(1) as usize)
+            .min(u16::MAX as usize) as u16
+    };
+    frame.render_widget(Paragraph::new(text).block(block).scroll((0, scroll)), area);
+    if active && inner.width > 0 && inner.height > 0 {
+        frame.set_cursor_position((
+            inner.x
+                + width
+                    .saturating_sub(scroll as usize)
+                    .min(inner.width as usize - 1) as u16,
+            inner.y,
+        ));
+    }
+}
+
+fn draw_subjects(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
+    let title = format!(
+        "{}Subjects | selected {} | {} found",
+        if app.focus == Focus::Subjects {
+            "> "
+        } else {
+            ""
+        },
+        app.selected.len(),
+        app.filtered.len()
+    );
     let items = app
         .filtered
         .iter()
@@ -1130,7 +1176,7 @@ fn draw_subjects(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     }
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(if matches!(app.focus, Focus::Subjects | Focus::Search) {
+        .border_style(if app.focus == Focus::Subjects {
             Style::default().fg(Color::Cyan)
         } else {
             Style::default()
@@ -1187,7 +1233,11 @@ fn draw_manual(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
         } else {
             Style::default()
         })
-        .title("Manual entries (a add, Enter edit, x on/off)");
+        .title(if app.focus == Focus::Manual {
+            "> Manual entries | a add · x toggle"
+        } else {
+            "Manual entries | a add · x toggle"
+        });
     frame.render_stateful_widget(
         List::new(items)
             .block(block)
@@ -1198,10 +1248,8 @@ fn draw_manual(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     );
 }
 
-fn result_lines(app: &AppState) -> (Vec<Line<'static>>, Option<usize>, usize) {
-    // The compact footer may clip long errors/paths. Their complete text belongs
-    // in this scrollable view as well, including before the first optimization.
-    let mut lines = vec![Line::from(format!("Action: {}", app.status))];
+fn result_lines(app: &AppState, width: u16) -> (Vec<Line<'static>>, Option<usize>, usize) {
+    let mut lines = Vec::new();
     let mut member_line = None;
     let mut notice_count = 0;
     if app.optimize_running {
@@ -1211,6 +1259,22 @@ fn result_lines(app: &AppState) -> (Vec<Line<'static>>, Option<usize>, usize) {
         )));
     }
     if let Some(solution) = &app.solution {
+        if solution.status == SolveStatus::OptimalKnown {
+            match app::actual_sections(&app.dataset, solution, &app.actual_members) {
+                Ok(sections) => lines.extend(week::week_lines(
+                    &sections,
+                    width,
+                    solution
+                        .choices
+                        .get(app.result_cursor)
+                        .map(|choice| choice.requirement_id.as_str()),
+                )),
+                Err(error) => lines.push(Line::styled(
+                    format!("Cannot render timetable: {error:#}"),
+                    Style::default().fg(Color::Red),
+                )),
+            }
+        }
         lines.push(Line::from(format!("Status: {:?}", solution.status)));
         if let Some(score) = solution.score {
             lines.push(Line::from(format!(
@@ -1221,7 +1285,7 @@ fn result_lines(app: &AppState) -> (Vec<Line<'static>>, Option<usize>, usize) {
         if solution.status == SolveStatus::OptimalKnown {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "Timetable",
+                "Exact meeting times",
                 Style::default().add_modifier(Modifier::BOLD),
             )));
             match timetable_lines(app) {
@@ -1308,6 +1372,9 @@ fn result_lines(app: &AppState) -> (Vec<Line<'static>>, Option<usize>, usize) {
                 .map(|notice| Line::from(format!("- {notice}"))),
         );
     }
+    // The compact footer may clip long errors/paths. Their complete text remains
+    // in this scrollable view, without pushing the weekly grid off the screen.
+    lines.push(Line::from(format!("Action: {}", app.status)));
     lines.push(Line::from(format!("Output: {}", app.output.display())));
     if let Some(export) = &app.export {
         notice_count += export.notices.len();
@@ -1325,7 +1392,7 @@ fn result_lines(app: &AppState) -> (Vec<Line<'static>>, Option<usize>, usize) {
 }
 
 fn draw_results(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
-    let (lines, member_line, notice_count) = result_lines(app);
+    let (lines, member_line, notice_count) = result_lines(app, area.width.saturating_sub(2));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(if app.focus == Focus::Results {
@@ -1333,7 +1400,14 @@ fn draw_results(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         } else {
             Style::default()
         })
-        .title(format!("Results | {notice_count} notices"));
+        .title(format!(
+            "{}Results | {notice_count} notices",
+            if app.focus == Focus::Results {
+                "> "
+            } else {
+                ""
+            }
+        ));
     let inner = block.inner(area);
     let paragraph = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
     // Ask Ratatui for the same Unicode/word wrapping used to render. Counting
@@ -1374,9 +1448,11 @@ fn draw_footer(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
         Line::from(app.status.clone()),
         Line::from("/ search  Space select  a add  o optimize  r results  e export  ? help"),
         Line::from(if app.focus == Focus::Results {
-            "PgUp/PgDn scroll | Home/End ends | Up/Down section | n/p member"
+            "h/l ←/→ panes | j/k ↑/↓ section | PgUp/Dn scroll | n/p member"
+        } else if app.focus == Focus::Manual {
+            "h/l ←/→ panes | j/k ↑/↓ move | Enter edit | x toggle | q quit"
         } else {
-            "Tab panels | m manual | x enable/disable | q quit"
+            "h/l ←/→ panes | j/k ↑/↓ move | Tab panels | m manual | q quit"
         }),
     ];
     frame.render_widget(
@@ -1389,7 +1465,10 @@ fn draw_help(frame: &mut Frame<'_>, area: Rect) {
     let popup = if area.width < 100 || area.height < 32 {
         area
     } else {
-        centered_rect(76, 54, area)
+        let mut popup = centered_rect(76, 54, area);
+        popup.height = popup.height.max(24);
+        popup.y = area.y + (area.height - popup.height) / 2;
+        popup
     };
     frame.render_widget(Clear, popup);
     let help = vec![
@@ -1398,15 +1477,23 @@ fn draw_help(frame: &mut Frame<'_>, area: Rect) {
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(KEYMAP),
+        Line::from("/                  Search subjects. Enter to browse, Ctrl+U to clear."),
+        Line::from("h/l or Left/Right  Previous/next pane. Tab/Shift+Tab also works."),
+        Line::from("j/k or Down/Up     Move within the active pane."),
+        Line::from("Space or Enter     Select/deselect the highlighted subject."),
+        Line::from("a / m              Add a manual section / focus manual entries."),
+        Line::from("Enter / x          Edit / enable-disable the selected manual entry."),
+        Line::from("o / c              Optimize / cancel background optimization."),
+        Line::from("r                  Focus results and return to the weekly grid."),
+        Line::from("PgUp/PgDn          scroll results: timetable, details, all notices."),
+        Line::from("Home/End           first/last result line."),
+        Line::from("n / p              Switch same-time member for the selected section."),
+        Line::from("e                  Export chosen sections to a new local ICS file."),
+        Line::from("q / Esc            Quit. Esc closes search, help, or an editor first."),
         Line::from(""),
-        Line::from(
-            "Manual editor fields: subject, component (lecture/recitation/lab/design), label, meetings, room, start date, end date.",
-        ),
-        Line::from("Meetings are atomic bundles: Mon 09:00-10:00;Wed 09:00-10:00."),
-        Line::from(
-            "Manual and selection edits clear old optimization/export results and reapply the immutable base catalog plus manual overlay.",
-        ),
+        Line::from("Editor: Tab fields, Ctrl+U clear, Enter/Ctrl+S save, Esc cancel."),
+        Line::from("Meetings: Mon 09:00-10:00;Wed 09:00-10:00. Exact minutes are kept."),
+        Line::from("Selection or manual edits clear the old optimization/export result."),
         Line::from("Press ? or Esc to close help."),
     ];
     frame.render_widget(
@@ -1640,6 +1727,9 @@ mod viewport_tests {
         let mut state = fixture_state(temp.path());
         render(&mut state, 80, 24);
         press(&mut state, KeyCode::Char('r'));
+        assert!(render(&mut state, 80, 24).contains("Timetable"));
+        press(&mut state, KeyCode::Up);
+        press(&mut state, KeyCode::Down);
         assert!(render(&mut state, 80, 24).contains("> A/lecture:"));
         let cursor = state.result_cursor;
         press(&mut state, KeyCode::PageDown);
@@ -1670,7 +1760,7 @@ mod viewport_tests {
         press(&mut state, KeyCode::Home);
         press(&mut state, KeyCode::PageUp);
         assert_eq!(state.result_viewport.offset, 0);
-        assert!(render(&mut state, 80, 24).contains("Status: OptimalKnown"));
+        assert!(render(&mut state, 80, 24).contains("Timetable"));
     }
 
     #[test]
@@ -1681,6 +1771,8 @@ mod viewport_tests {
         state.solution.as_mut().unwrap().choices[0].members[0].label = "界α section ".repeat(20);
         render(&mut state, 80, 24);
         press(&mut state, KeyCode::Char('r'));
+        press(&mut state, KeyCode::Up);
+        press(&mut state, KeyCode::Down);
         assert!(render(&mut state, 80, 24).contains("> A/lecture:"));
         press(&mut state, KeyCode::End);
         assert!(render(&mut state, 80, 24).contains("Notice 11:"));
@@ -1716,7 +1808,7 @@ mod viewport_tests {
         render(&mut state, 80, 24);
         press(&mut state, KeyCode::End);
         assert!(render(&mut state, 80, 24).contains("Export notice: Omitted section 11"));
-        assert_eq!(result_lines(&state).2, 24);
+        assert_eq!(result_lines(&state, 78).2, 24);
         state.status = format!("{}STATUS_END", "Long action message ".repeat(20));
         state.output = temp
             .path()
@@ -1738,6 +1830,83 @@ mod viewport_tests {
         for i in 0..12 {
             assert!(pages.contains(&format!("Source notice {i:02}")));
             assert!(pages.contains(&format!("Omitted section {i:02}")));
+        }
+    }
+
+    #[test]
+    fn search_replaces_status_header_and_week_has_full_width_at_80_columns() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        let screen = render(&mut state, 80, 24);
+        let header = screen.chars().take(240).collect::<String>();
+        assert!(header.contains("Search subjects"));
+        assert!(header.contains("Search by course number or title"));
+        assert!(!header.contains("Status"));
+        assert!(screen.contains("> Subjects"));
+        for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+            assert!(screen.contains(day), "missing {day}: {screen}");
+        }
+        assert!(screen.contains("09:00"));
+        assert!(screen.contains("09:30"));
+        press(&mut state, KeyCode::Char('l'));
+        assert!(render(&mut state, 80, 24).contains("> Manual entries"));
+        press(&mut state, KeyCode::Right);
+        assert!(render(&mut state, 80, 24).contains("> Results"));
+        press(&mut state, KeyCode::Char('/'));
+        for c in "hello hjkl".chars() {
+            press(&mut state, KeyCode::Char(c));
+        }
+        let screen = render(&mut state, 80, 24);
+        let header = screen.chars().take(240).collect::<String>();
+        assert!(header.contains("hello hjkl"));
+        assert!(header.contains("> Search subjects"));
+        assert!(screen.contains("0 found"));
+    }
+
+    #[test]
+    fn long_unicode_search_keeps_caret_and_tail_visible_after_resize() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        state.focus = Focus::Search;
+        state.query = format!("{}TAIL", "界α".repeat(50));
+        for (width, height) in [(80, 24), (36, 12), (12, 5), (1, 1), (0, 0), (120, 40)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut state)).unwrap();
+            if width >= 36 {
+                let screen = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>();
+                assert!(
+                    screen.contains("TAIL"),
+                    "search tail clipped at {width}x{height}"
+                );
+                let cursor = terminal.get_cursor_position().unwrap();
+                assert!(cursor.x < width && cursor.y < 3, "caret outside search bar");
+            }
+        }
+    }
+
+    #[test]
+    fn help_shows_all_new_controls_and_close_hint_at_common_sizes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        state.show_help = true;
+        for (width, height) in [(80, 24), (120, 32), (170, 55)] {
+            let screen = render(&mut state, width, height);
+            for text in [
+                "h/l or Left/Right",
+                "j/k or Down/Up",
+                "scroll results",
+                "first/last result line",
+                "Switch same-time member",
+                "Press ? or Esc to close help.",
+            ] {
+                assert!(screen.contains(text), "missing {text} at {width}x{height}");
+            }
         }
     }
 }

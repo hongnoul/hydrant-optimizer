@@ -19,6 +19,7 @@ CLI/TUI subject selection -> equivalent-time grouping -> pure exact optimizer
 | `calendar` | Dated event expansion, holidays/alternate weekdays, New York timezone, ICS |
 | `app` | Shared CLI/TUI orchestration, actual-member resolution, safe export |
 | `tui` | Keyboard state machine, selection/editor/result views, solver worker |
+| `tui::week` | Seven-day, 30-minute display grid built from resolved actual sections |
 | `main` | CLI options, local-file input, text/JSON output, application startup |
 
 Dependencies: `serde`/`serde_json` for data, `reqwest::blocking` for HTTPS, Ratatui/Crossterm for the terminal, `chrono`/`chrono-tz` for dates, `clap` for CLI parsing, `sha2` for content-derived IDs, and `tempfile` for safe file replacement/output. The calendar module emits RFC 5545 text, checked with the independent `icalendar` parser in tests. `Cargo.lock` pins the executable's dependency graph.
@@ -77,6 +78,8 @@ The optimizer is a pure in-memory function. It receives selected merged requirem
 The TUI owns selection IDs, search text, editor state, chosen result members, and notices. Selection survives filtering. Any selection/manual edit invalidates the old result. Search runs on an ordinary worker thread, communicating its result to the event loop. Escape can cancel, and cancellation never claims an optimum or infeasibility. There is no need for application-wide async. Initial HTTP loading happens before entering terminal raw mode.
 
 Terminal setup has restoration guards for normal exit, errors, and panics. The interface provides catalog selection, manual entry management, score/timetable, unresolved notices, actual same-time member switching, explicit infeasibility, and local export.
+
+The top-level search input replaces the former status panel. Subjects and manual entries sit above a full-width results pane so all seven weekday columns fit at 80 columns. The weekly timetable uses one row per 30-minute interval, including all intersecting exact-minute meetings. This is only display bucketing, never solver or export rounding. Exact meeting times and member details follow the grid. Left/Right and h/l cycle panes, while Up/Down and k/j navigate within the active pane. Search/editor input consumes text before navigation shortcuts.
 
 The results viewport tracks wrapped-row offset separately from the selected section. PgUp/PgDn and Home/End scroll content without changing section selection. Section navigation reveals the selected row. Ratatui's rendered-line measurement accounts for word/Unicode wrapping and clamps offsets after resizing. All notices, action messages, and output paths are retained in the scrollable view. Result invalidation resets the viewport.
 

@@ -147,17 +147,60 @@ fn actual_tui_80x24_reaches_members_all_notices_and_exports() {
     let output = dir.join("small.ics");
     let mut ui = Driver::with_size(dir, &output, 24, 80, &args);
     ui.marker("Preselected 12 subject(s)");
+    let header = ui
+        .screen
+        .screen()
+        .contents()
+        .lines()
+        .take(3)
+        .collect::<String>();
+    assert!(header.contains("Search subjects"));
+    assert!(!header.contains("Status"));
+    ui.send(b"l");
+    ui.marker("> Manual entries");
+    ui.send(b"\x1b[C");
+    ui.marker("> Results");
+    ui.send(b"h");
+    ui.marker("> Manual entries");
+    ui.send(b"\x1b[D");
+    ui.marker("> Subjects");
+    ui.send(b"/hjkl");
+    ui.until("search input, not navigation shortcuts", |s| {
+        s.lines().take(3).collect::<String>().contains("hjkl") && s.contains("selected 12")
+    });
+    ui.send(b"\x15\rj");
+    ui.marker("> [x] B");
+    ui.send(b"\x1b[A");
+    ui.marker("> [x] A");
+    ui.send(b"\x1b[B");
+    ui.marker("> [x] B");
+    ui.send(b"k");
+    ui.marker("> [x] A");
     ui.send(b"?");
-    ui.marker("Home/End first/last result line");
+    ui.marker("Home/End");
     ui.marker("PgUp/PgDn");
     ui.marker("scroll results");
     ui.send(b"?");
     ui.send(b"o");
     ui.marker("Optimal: 1 occupied day(s), 0 gap minute(s).");
     ui.send(b"r");
-    ui.marker("> A/lecture:");
+    ui.marker("Timetable");
+    ui.until("seven-day 30-minute grid", |s| {
+        s.contains("> Results")
+            && s.contains("PgUp/Dn |")
+            && [
+                "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "09:00", "09:30",
+            ]
+            .iter()
+            .all(|label| s.contains(label))
+    });
+    println!("WEEK_VIEW_80x24\n{}", ui.screen.screen().contents());
     ui.send(b"n");
     ui.marker("(2/2)");
+    ui.send(b"j");
+    ui.marker("> B/lecture:");
+    ui.send(b"k");
+    ui.marker("> A/lecture:");
     ui.send(b"\x1b[B");
     ui.marker("> B/lecture:");
     ui.send(b"\x1b[A");
@@ -167,9 +210,9 @@ fn actual_tui_80x24_reaches_members_all_notices_and_exports() {
     ui.send(b"\x1b[H");
     ui.marker("Timetable");
     ui.send(b"\x1b[6~"); // PageDown scrolls content, not the selected component.
-    ui.until("paged results", |s| !s.contains("Status: OptimalKnown"));
+    ui.until("paged results", |s| !s.contains("Timetable"));
     ui.send(b"\x1b[5~");
-    ui.marker("Status: OptimalKnown");
+    ui.marker("Timetable");
     ui.send(b"e");
     ui.marker("Exported");
     ui.send(b"\x1b[F");

@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use crate::model::ChosenSection;
+use crate::{color, model::ChosenSection};
 
 const DAYS: [&str; 5] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 const SLOT_MINUTES: u16 = 30;
@@ -41,6 +41,7 @@ struct Entry {
     course_id: String,
     kind: String,
     section_id: String,
+    room: String,
     selected: bool,
     color: Color,
 }
@@ -146,8 +147,16 @@ fn entries_from_sections(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let mut entry_set = EntrySet::default();
+    let ordered_courses = color::sorted_course_ids(sections);
     for section in sections {
-        let color = course_color(&section.course_id);
+        let color = course_color(&section.course_id, &ordered_courses);
+        let room = section
+            .section
+            .room
+            .split(|ch: char| ch.is_whitespace() || ch.is_control())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
         let selected = selected_requirement
             .map(|requirement| section_matches_requirement(section, requirement))
             .unwrap_or(false);
@@ -169,6 +178,7 @@ fn entries_from_sections(
                 course_id: section.course_id.clone(),
                 kind: component_label(&section.kind),
                 section_id: section.section.id.clone(),
+                room: room.clone(),
                 selected,
                 color,
             });
@@ -226,8 +236,21 @@ fn row_line(plan: &ColumnPlan, entries: &[Entry], slot_start: u16) -> Line<'stat
                 .filter(|entry| entry.start >= slot_start)
                 .collect();
             let text = if starts.is_empty() {
-                String::new()
+                // Occupancy uses half-open intervals, so one-row sessions never
+                // reach this row. Count rendered rows, not elapsed minutes: an
+                // off-grid meeting can span two rows in less than half an hour.
+                occupants
+                    .iter()
+                    .filter(|entry| entry.start / SLOT_MINUTES + 1 == slot_start / SLOT_MINUTES)
+                    .map(|entry| entry.room.as_str())
+                    .filter(|room| !room.is_empty())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join("/")
             } else {
+                // A new session's first-row legend takes priority over rooms
+                // when multiple sessions share the same display cell.
                 occupant_text(&starts, width)
             };
             spans.push(Span::styled(
@@ -386,7 +409,7 @@ fn occupant_style(occupants: &[&Entry]) -> Style {
     if occupants.iter().any(|entry| entry.selected) {
         return Style::default()
             .fg(Color::Black)
-            .bg(Color::Yellow)
+            .bg(Color::White)
             .add_modifier(Modifier::BOLD);
     }
     if occupants.len() == 1 {
@@ -414,17 +437,8 @@ fn intersects(start: u16, end: u16, slot_start: u16, slot_end: u16) -> bool {
     start < slot_end && end > slot_start
 }
 
-fn course_color(course_id: &str) -> Color {
-    PALETTE[stable_hash(course_id) as usize % PALETTE.len()]
-}
-
-fn stable_hash(value: &str) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in value.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
+fn course_color(course_id: &str, ordered_course_ids: &[String]) -> Color {
+    PALETTE[color::course_color_index(course_id, ordered_course_ids) % PALETTE.len()]
 }
 
 fn format_time(minutes: u16) -> String {
@@ -557,7 +571,7 @@ mod tests {
         let selected: Vec<_> = row
             .spans
             .iter()
-            .filter(|span| span.style.bg == Some(Color::Yellow))
+            .filter(|span| span.style.bg == Some(Color::White))
             .collect();
         assert_eq!(selected.len(), 1);
         assert!(selected[0].content.contains("A Lec"));
@@ -632,7 +646,7 @@ mod tests {
         let row_1030 = row_text(&lines, "10:30");
         assert_eq!(cell_text(&row_1000, 0).trim(), "·");
         assert!(cell_text(&row_1000, 2).contains("6.1200"));
-        assert_eq!(cell_text(&row_1030, 2).trim(), "");
+        assert_eq!(cell_text(&row_1030, 2).trim(), "room");
         assert_eq!(
             lines[row_index(&lines, "10:00")].spans[7].style,
             lines[row_index(&lines, "10:30")].spans[7].style
@@ -665,9 +679,189 @@ mod tests {
             None,
         );
         assert!(cell_text(&row_text(&lines, "09:00"), 1).contains("7.012"));
-        assert_eq!(cell_text(&row_text(&lines, "09:30"), 1).trim(), "");
+        assert_eq!(cell_text(&row_text(&lines, "09:30"), 1).trim(), "room");
         assert!(!all_text(&lines).contains("09:01"));
         assert!(!all_text(&lines).contains("09:59"));
+    }
+
+    #[test]
+    fn rooms_appear_only_on_the_second_occupied_row_at_time_boundaries() {
+        for start in [
+            0, 1, 29, 30, 539, 540, 541, 569, 570, 1380, 1409, 1410, 1411, 1439,
+        ] {
+            for duration in [1, 2, 15, 29, 30, 31, 59, 60, 61, 90, 1440] {
+                let end = (start + duration).min(1440);
+                let day = (start % 5) as u8;
+                let mut item = section("A", "lecture", "L1", vec![meeting(day, start, end)]);
+                item.section.room = "32-123".into();
+                let lines = week_lines(&[item], 78, Some("A/lecture"));
+                assert_eq!(lines.len(), 52);
+                let first_slot = start / 30;
+                let last_slot = (end - 1) / 30;
+                for slot in 0..48 {
+                    let row = row_text(&lines, &format_time(slot * 30));
+                    let expected = if slot < first_slot || slot > last_slot {
+                        "·"
+                    } else if slot == first_slot {
+                        "A Lec"
+                    } else if slot == first_slot + 1 {
+                        "32-123"
+                    } else {
+                        ""
+                    };
+                    assert_eq!(
+                        cell_text(&row, day as usize).trim(),
+                        expected,
+                        "room placement for {start}-{end} at slot {slot}"
+                    );
+                }
+                if last_slot > first_slot {
+                    let column = 3 + 2 * day as usize;
+                    assert_eq!(
+                        lines[3 + first_slot as usize].spans[column].style,
+                        lines[4 + first_slot as usize].spans[column].style,
+                        "the room row must retain the block's selection style"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn each_meeting_gets_its_own_room_row_without_leaking_into_short_meetings() {
+        let item = section(
+            "A",
+            "lecture",
+            "L1",
+            vec![
+                meeting(0, 540, 630),
+                meeting(0, 630, 660),
+                meeting(2, 555, 585),
+            ],
+        );
+        let lines = week_lines(&[item], 78, None);
+        assert_eq!(cell_text(&row_text(&lines, "09:30"), 0).trim(), "room");
+        assert_eq!(cell_text(&row_text(&lines, "09:30"), 2).trim(), "room");
+        assert_eq!(cell_text(&row_text(&lines, "10:00"), 0).trim(), "");
+        assert_eq!(cell_text(&row_text(&lines, "10:30"), 0).trim(), "A Lec");
+        assert_eq!(cell_text(&row_text(&lines, "11:00"), 0).trim(), "·");
+        assert_eq!(all_text(&lines).matches("room").count(), 2);
+    }
+
+    #[test]
+    fn empty_and_multiline_rooms_stay_within_one_row() {
+        for (room, expected) in [
+            ("", ""),
+            (" \t\r\n\0", ""),
+            (" 32-123 ", "32-123"),
+            ("32-123\r\n\t East\0\u{a0}Wing", "32-123 East Wing"),
+        ] {
+            let mut item = section("A", "lecture", "L1", vec![meeting(0, 540, 630)]);
+            item.section.room = room.into();
+            let lines = week_lines(&[item], 100, None);
+            assert_eq!(cell_text(&row_text(&lines, "09:30"), 0).trim(), expected);
+            assert_eq!(cell_text(&row_text(&lines, "10:00"), 0).trim(), "");
+            assert_eq!(lines.len(), 52);
+            assert!(lines.iter().all(|line| line.width() == 100));
+            assert!(
+                lines
+                    .iter()
+                    .flat_map(|line| &line.spans)
+                    .all(|span| !span.content.chars().any(char::is_control))
+            );
+        }
+    }
+
+    #[test]
+    fn long_unicode_rooms_are_clipped_to_each_day_column_at_all_small_widths() {
+        let room = "界e\u{301}🇺🇸👨\u{200d}👩\u{200d}👧\u{200d}👦 32-123 Long room";
+        let mut item = section(
+            "A",
+            "lecture",
+            "L1",
+            (0..5).map(|day| meeting(day, 540, 630)).collect(),
+        );
+        item.section.room = room.into();
+        for width in 0..=120 {
+            let lines = week_lines(std::slice::from_ref(&item), width, None);
+            assert!(lines.iter().all(|line| line.width() <= width as usize));
+            if let Some(plan) = ColumnPlan::new(width as usize) {
+                assert_eq!(lines.len(), 52);
+                let row = row_text(&lines, "09:30");
+                for day in 0..5 {
+                    assert_eq!(cell_text(&row, day), pad_cell(room, plan.day_widths[day]));
+                }
+            } else {
+                assert!(!all_text(&lines).contains("32-123"));
+            }
+        }
+    }
+
+    #[test]
+    fn shared_room_rows_are_sorted_deduplicated_and_exclude_short_sessions() {
+        let mut sections = Vec::new();
+        for (id, room, end) in [
+            ("A", "34-101", 630),
+            ("B", "32-123", 630),
+            ("C", "34-101", 630),
+            ("D", "short", 570),
+            ("E", "", 630),
+        ] {
+            let mut item = section(id, "lecture", "L1", vec![meeting(0, 540, end)]);
+            item.section.room = room.into();
+            sections.push(item);
+        }
+        let lines = week_lines(&sections, 100, None);
+        assert_eq!(
+            cell_text(&row_text(&lines, "09:30"), 0).trim(),
+            "32-123/34-101"
+        );
+        assert_eq!(cell_text(&row_text(&lines, "10:00"), 0).trim(), "");
+        assert!(!all_text(&lines).contains("short"));
+        sections.reverse();
+        assert_eq!(
+            all_text(&lines),
+            all_text(&week_lines(&sections, 100, None))
+        );
+    }
+
+    #[test]
+    fn new_session_legends_take_priority_over_overlapping_room_rows() {
+        let mut first = section("A", "lecture", "L1", vec![meeting(0, 540, 660)]);
+        first.section.room = "32-123".into();
+        let mut second = section("B", "lab", "B1", vec![meeting(0, 570, 660)]);
+        second.section.room = "34-101".into();
+        let lines = week_lines(&[first, second], 78, None);
+        assert_eq!(cell_text(&row_text(&lines, "09:00"), 0).trim(), "A Lec");
+        assert_eq!(cell_text(&row_text(&lines, "09:30"), 0).trim(), "B Lab");
+        assert_eq!(cell_text(&row_text(&lines, "10:00"), 0).trim(), "34-101");
+        assert_eq!(cell_text(&row_text(&lines, "10:30"), 0).trim(), "");
+        assert!(!all_text(&lines).contains("32-123"));
+    }
+
+    #[test]
+    fn invalid_and_hidden_meetings_never_render_rooms() {
+        let lines = week_lines(
+            &[section(
+                "A",
+                "lecture",
+                "L1",
+                vec![
+                    meeting(0, 540, 540),
+                    meeting(0, 600, 540),
+                    meeting(0, 1410, 1441),
+                    meeting(5, 540, 600),
+                    meeting(6, 540, 600),
+                    meeting(7, 540, 600),
+                    meeting(255, 0, u16::MAX),
+                ],
+            )],
+            78,
+            None,
+        );
+        assert!(!all_text(&lines).contains("room"));
+        assert!(!all_text(&lines).contains("A Lec"));
+        assert!(all_text(&lines).contains("2 weekend meetings"));
     }
 
     #[test]
@@ -867,7 +1061,7 @@ mod tests {
             .flat_map(|line| &line.spans)
             .find(|span| span.content.contains("6.1200"))
             .unwrap();
-        assert_eq!(highlighted.style.bg, Some(Color::Yellow));
+        assert_eq!(highlighted.style.bg, Some(Color::White));
     }
 
     #[test]
@@ -913,7 +1107,7 @@ mod tests {
             .flat_map(|line| &line.spans)
             .find(|span| span.content.contains("Lec"))
             .unwrap();
-        assert_eq!(highlighted.style.bg, Some(Color::Yellow));
+        assert_eq!(highlighted.style.bg, Some(Color::White));
         assert!(highlighted.style.add_modifier.contains(Modifier::BOLD));
         assert!(highlighted.content.contains("界6.1200 Lec"));
 

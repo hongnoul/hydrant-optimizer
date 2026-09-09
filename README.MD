@@ -65,6 +65,8 @@ The manual editor's fields are Subject, Component, Section label, Meetings, Room
 
 The top search bar replaces the old status panel. Navigation letters remain ordinary text while searching or editing. Action feedback stays in the footer.
 
+All panels and overlays resize to the current terminal pane, leaving one unused column on the right so borders stay visible beside the host pane's edge.
+
 Subjects and Selected classes share the upper row equally. Optimized schedules appear below them as a **separate edge-to-edge timetable**, without an outer container or legend. A single heading shows focus and scroll position above the grid. **Monday–Friday columns and 30-minute rows** span the earliest through latest chosen weekday meetings. Colored cells show subject numbers and components: **Lec**, **Rec**, **Lab**, **PE**, or another component label. Narrow cells shorten the subject number before the component. Off-grid meetings occupy each intersecting half-hour cell without changing their actual times. A `2×` (or higher) marker indicates multiple meetings sharing a half-hour cell, not necessarily a scheduling conflict. Crowded cells retain a component summary rather than suggesting incorrect subject/component pairings. Weekend meetings are explicitly disclosed outside the grid and remain in optimization and export.
 
 The timetable scrolls at **80×24** using PgUp/PgDn and Home/End. The Results pane and its shortcuts have been removed. Full machine-readable optimization details remain available through the CLI.

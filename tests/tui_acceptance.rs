@@ -16,7 +16,7 @@ use std::{
 
 struct Driver {
     child: Box<dyn portable_pty::Child + Send + Sync>,
-    _master: Box<dyn portable_pty::MasterPty + Send>,
+    master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     output: mpsc::Receiver<Vec<u8>>,
     screen: vt100::Parser,
@@ -74,7 +74,7 @@ impl Driver {
         });
         Self {
             child,
-            _master: pair.master,
+            master: pair.master,
             writer,
             output: receive,
             screen: vt100::Parser::new(rows, cols, 1000),
@@ -84,6 +84,17 @@ impl Driver {
     fn send(&mut self, keys: &[u8]) {
         self.writer.write_all(keys).unwrap();
         self.writer.flush().unwrap();
+    }
+    fn resize(&mut self, rows: u16, cols: u16) {
+        self.screen.screen_mut().set_size(rows, cols);
+        self.master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
     }
     fn until(&mut self, label: &str, condition: impl Fn(&str) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -243,6 +254,72 @@ fn assert_removed_shortcuts_ignored(ui: &mut Driver) {
         );
         assert_three_pane_ui(&after);
     }
+}
+
+#[test]
+fn actual_tui_keeps_container_borders_visible_through_pane_resizes() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut ui = Driver::with_size(
+        temp.path(),
+        &temp.path().join("resize-unused.ics"),
+        61,
+        107,
+        &[
+            "--catalog",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/catalog.json"),
+            "--term",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/term.json"),
+            "tui",
+            "--select",
+            "A",
+            "--select",
+            "B",
+        ],
+    );
+    ui.marker("Preselected 2 subject(s)");
+    ui.send(b"o");
+    ui.marker("Optimal:");
+    for (cols, rows) in [(107, 61), (80, 24), (53, 24), (170, 55), (107, 61)] {
+        ui.resize(rows, cols);
+        ui.until("containers fit resized pane", |screen| {
+            let lines = screen.lines().collect::<Vec<_>>();
+            [0, 3, rows as usize - 5].into_iter().all(|row| {
+                lines
+                    .get(row)
+                    .and_then(|line| line.chars().nth(cols as usize - 2))
+                    == Some('┐')
+            }) && lines
+                .get(rows as usize - 1)
+                .and_then(|line| line.chars().nth(cols as usize - 2))
+                == Some('┘')
+        });
+        let screen = ui.screen.screen();
+        for row in 0..rows {
+            assert!(
+                screen
+                    .cell(row, cols - 1)
+                    .unwrap()
+                    .contents()
+                    .trim()
+                    .is_empty(),
+                "right gutter at {cols}x{rows}, row {row}"
+            );
+        }
+        let contents = screen.contents();
+        assert_three_pane_ui(&contents);
+        let header = contents
+            .lines()
+            .find(|line| line.starts_with("│Time"))
+            .unwrap();
+        assert_eq!(header.chars().nth(cols as usize - 2), Some('│'));
+        for day in ["Mon", "Tue", "Wed", "Thu", "Fri"] {
+            assert!(header.contains(day), "missing {day} at {cols}x{rows}");
+        }
+        assert!(pane_contents(&contents, "Selected").contains("Algorithms"));
+    }
+    ui.send(b"q");
+    ui.marker("TERMINAL_RESTORED");
+    assert!(ui.child.wait().unwrap().success());
 }
 
 #[test]
@@ -489,8 +566,8 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     );
     assert_eq!(
         border.chars().count(),
-        120,
-        "The table itself must span the terminal width without an inset"
+        119,
+        "The table must fill the safe pane width, leaving the terminal's final column unused"
     );
     let grid_header = screen.lines().nth(timetable_title + 2).unwrap();
     assert_eq!(grid_header.matches('│').count(), 7, "no parent box sides");

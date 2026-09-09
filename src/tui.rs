@@ -1110,6 +1110,11 @@ fn drain_worker(app: &mut AppState, worker: &mut Option<OptimizeWorker>) {
 }
 
 fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
+    // Leave the terminal's final column unused. Pane hosts can clip that column
+    // against their own border, and writing there can trigger terminal wrapping.
+    // Derive every pane and overlay from this same safe area on each redraw.
+    let mut area = frame.area();
+    area.width = area.width.saturating_sub(1);
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1117,7 +1122,7 @@ fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
             Constraint::Min(0),
             Constraint::Length(5),
         ])
-        .split(frame.area());
+        .split(area);
 
     draw_search(frame, app, root[0]);
 
@@ -1136,15 +1141,15 @@ fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
     draw_footer(frame, app, root[2]);
 
     if app.focus == Focus::Manual {
-        let popup = centered_rect(90, 70, frame.area());
+        let popup = centered_rect(90, 70, area);
         frame.render_widget(Clear, popup);
         draw_manual(frame, app, popup);
     }
     if app.show_help {
-        draw_help(frame, frame.area());
+        draw_help(frame, area);
     }
     if let Some(form) = &app.editor {
-        draw_editor(frame, form, frame.area());
+        draw_editor(frame, form, area);
     }
 }
 
@@ -1618,6 +1623,80 @@ mod viewport_tests {
         state
             .handle_key(KeyEvent::new(code, KeyModifiers::NONE))
             .unwrap();
+    }
+
+    #[test]
+    fn panes_keep_right_borders_inside_the_terminal_after_resize() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        let mut terminal = Terminal::new(TestBackend::new(107, 61)).unwrap();
+        for (width, height) in [(107, 61), (80, 24), (53, 24), (170, 55), (107, 61)] {
+            terminal.backend_mut().resize(width, height);
+            terminal.draw(|frame| draw(frame, &mut state)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let right = width - 2;
+            for (row, border) in [
+                (0, "┐"),
+                (1, "│"),
+                (2, "┘"),
+                (3, "┐"),
+                (height - 5, "┐"),
+                (height - 1, "┘"),
+            ] {
+                assert_eq!(
+                    buffer[(right, row)].symbol(),
+                    border,
+                    "{width}x{height} row {row}"
+                );
+            }
+            let table_top = (0..height)
+                .find(|&y| {
+                    buffer[(0, y)].symbol() == "┌"
+                        && (0..width).any(|x| buffer[(x, y)].symbol() == "┬")
+                })
+                .unwrap();
+            assert_eq!(buffer[(right, table_top)].symbol(), "┐");
+            assert_eq!(buffer[(right, table_top + 1)].symbol(), "│");
+            for y in 0..height {
+                assert_eq!(
+                    buffer[(width - 1, y)].symbol(),
+                    " ",
+                    "right gutter at {width}x{height}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn overlays_and_search_caret_respect_the_right_gutter_at_all_sizes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        state.query = "界α".repeat(100);
+        for (width, height) in [(107, 61), (80, 24), (36, 12), (12, 5), (1, 1), (0, 0)] {
+            for mode in 0..4 {
+                state.focus = if mode == 1 {
+                    Focus::Manual
+                } else {
+                    Focus::Search
+                };
+                state.show_help = mode == 2;
+                state.editor = (mode == 3).then(|| ManualForm::new("A".into()));
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|frame| draw(frame, &mut state)).unwrap();
+                if width > 0 {
+                    for y in 0..height {
+                        assert_eq!(terminal.backend().buffer()[(width - 1, y)].symbol(), " ");
+                    }
+                }
+                if mode == 0 && width >= 12 {
+                    let cursor = terminal.get_cursor_position().unwrap();
+                    assert!(
+                        cursor.x < width - 2,
+                        "caret must stay inside the search border"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -71,6 +71,46 @@ pub struct CourseColor {
     pub gcal_id: &'static str,
 }
 
+/// Short timetable legend for a section-kind string, e.g. `Lec`, `Rec`, `Lab`.
+/// Shared by the TUI grid and ICS event titles so both read like Hydrant.
+pub fn component_label(kind: &str) -> String {
+    let trimmed = kind.trim();
+    let normalized = trimmed.to_ascii_lowercase();
+    let collapsed = normalized
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>();
+    match collapsed.as_str() {
+        "lecture" | "lec" => "Lec".to_string(),
+        "recitation" | "rec" => "Rec".to_string(),
+        "lab" | "laboratory" => "Lab".to_string(),
+        "pe" | "physicaleducation" => "PE".to_string(),
+        "design" => "Design".to_string(),
+        "" => "Other".to_string(),
+        _ => {
+            let mut chars = trimmed.chars().filter(|ch| !ch.is_whitespace());
+            let label = chars.by_ref().take(3).collect::<String>();
+            if label.is_empty() {
+                "Other".to_string()
+            } else {
+                titlecase_ascii(&label)
+            }
+        }
+    }
+}
+
+fn titlecase_ascii(value: &str) -> String {
+    let mut output = String::new();
+    let mut chars = value.chars();
+    if let Some(first) = chars.next() {
+        output.extend(first.to_uppercase());
+    }
+    for ch in chars {
+        output.extend(ch.to_lowercase());
+    }
+    output
+}
+
 impl CourseColor {
     pub fn by_index(index: usize) -> Self {
         let index = index % PALETTE_LEN;
@@ -118,6 +158,16 @@ mod tests {
             .map(|id| course_color_index(id, &ordered))
             .collect::<Vec<_>>();
         assert_eq!(indexes, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn component_labels_match_hydrant_legends() {
+        assert_eq!(component_label("lecture"), "Lec");
+        assert_eq!(component_label("recitation"), "Rec");
+        assert_eq!(component_label("lab"), "Lab");
+        assert_eq!(component_label("pe"), "PE");
+        assert_eq!(component_label("design"), "Design");
+        assert_eq!(component_label("seminar"), "Sem");
     }
 
     #[test]

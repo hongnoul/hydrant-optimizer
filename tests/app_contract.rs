@@ -219,3 +219,45 @@ fn export_paths_always_carry_unix_time_and_repeat_exports_never_reuse() {
         assert!(text.contains("BEGIN:VEVENT"));
     }
 }
+
+#[test]
+fn export_titles_are_legend_only_with_label_and_room_elsewhere() {
+    let base = dataset();
+    let solution = app::optimize(&base, &["B".to_owned()], None).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let report = app::write_calendar(
+        &base,
+        &solution,
+        &BTreeMap::new(),
+        &temp.path().join("legend.ics"),
+    )
+    .unwrap();
+    // Titles read like Hydrant: course plus short legend only.
+    assert!(report.ics.contains("SUMMARY:B Lec"));
+    assert!(
+        !report.ics.contains("SUMMARY:B lecture"),
+        "titles must not carry the full kind or section label"
+    );
+    for event in report.ics.split("BEGIN:VEVENT").skip(1) {
+        let summary = event
+            .lines()
+            .find(|line| line.starts_with("SUMMARY:"))
+            .unwrap();
+        assert!(
+            summary.split_whitespace().count() == 2,
+            "legend-only title, not a sentence: {summary}"
+        );
+    }
+    // The full section label survives in DESCRIPTION, room in LOCATION.
+    let sections = app::actual_sections(&base, &solution, &BTreeMap::new()).unwrap();
+    for section in &sections {
+        assert!(report.ics.contains(&section.section.label));
+        if !section.section.room.trim().is_empty() {
+            assert!(
+                report
+                    .ics
+                    .contains(&format!("LOCATION:{}", section.section.room))
+            );
+        }
+    }
+}

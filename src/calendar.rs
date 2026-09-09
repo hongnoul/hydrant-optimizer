@@ -89,15 +89,17 @@ pub fn export_ics(calendar: &TermCalendar, chosen: &[ChosenSection]) -> Result<E
                     start,
                     end,
                     summary: format!(
-                        "{} {} {}",
-                        section.course_id, section.kind, section.section.label
+                        "{} {}",
+                        section.course_id,
+                        color::component_label(&section.kind)
                     ),
                     location: section.section.room.clone(),
                     description: format!(
-                        "{}\n{} {}\nColor: {} {} (Google Calendar event colorId {})",
+                        "{}\n{} {} {}\nColor: {} {} (Google Calendar event colorId {})",
                         section.course_title,
                         section.course_id,
                         section.kind,
+                        section.section.label,
                         course_color.gcal_name,
                         course_color.hex,
                         course_color.gcal_id,

@@ -255,7 +255,7 @@ fn live_catalog_manual_refresh_optimize_switch_and_export() {
             "PE escaped its published offering range: {stamp}"
         );
     }
-    assert!(pe_text.contains(&format!("SUMMARY:{pe_id} pe")));
+    assert!(pe_text.contains(&format!("SUMMARY:{pe_id} PE")));
     println!(
         "LIVE_PE_ACCEPTANCE offerings={} selected={pe_id} events={pe_count} date_bounds={start}..{end} bounded_export=true",
         pe_courses.len()

@@ -152,6 +152,8 @@ fn pe_catalog_optimizes_with_academics_and_exports_only_offering_dates() {
     assert!(!hint.exists(), "the bare hint must never be written");
     assert_eq!(report.event_count, 9); // 6 academic + Q1 Oct26 + Q2 Nov3/Nov9.
     assert!(report.ics.contains("PE.1000.Q1 pe") && report.ics.contains("PE.1000.Q2 pe"));
+    assert!(report.ics.contains("SUMMARY:PE.1000.Q1 PE"));
+    assert!(report.ics.contains("SUMMARY:PE.1000.Q2 PE"));
     let pe_events: Vec<_> = report
         .ics
         .split("BEGIN:VEVENT")

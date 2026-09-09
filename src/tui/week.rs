@@ -341,41 +341,7 @@ fn occupant_text(occupants: &[&Entry], width: usize) -> String {
 }
 
 fn component_label(kind: &str) -> String {
-    let trimmed = kind.trim();
-    let normalized = trimmed.to_ascii_lowercase();
-    let collapsed = normalized
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .collect::<String>();
-    match collapsed.as_str() {
-        "lecture" | "lec" => "Lec".to_string(),
-        "recitation" | "rec" => "Rec".to_string(),
-        "lab" | "laboratory" => "Lab".to_string(),
-        "pe" | "physicaleducation" => "PE".to_string(),
-        "design" => "Design".to_string(),
-        "" => "Other".to_string(),
-        _ => {
-            let mut chars = trimmed.chars().filter(|ch| !ch.is_whitespace());
-            let label = chars.by_ref().take(3).collect::<String>();
-            if label.is_empty() {
-                "Other".to_string()
-            } else {
-                titlecase_ascii(&label)
-            }
-        }
-    }
-}
-
-fn titlecase_ascii(value: &str) -> String {
-    let mut output = String::new();
-    let mut chars = value.chars();
-    if let Some(first) = chars.next() {
-        output.extend(first.to_uppercase());
-    }
-    for ch in chars {
-        output.extend(ch.to_lowercase());
-    }
-    output
+    color::component_label(kind)
 }
 
 fn fit_component_text(prefix: &str, subject: &str, component: &str, width: usize) -> String {

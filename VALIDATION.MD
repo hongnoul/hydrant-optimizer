@@ -1,5 +1,9 @@
 # Validation record
 
+## Whole-result replay of both goals
+
+[REPLAY.MD](REPLAY.MD) records the fresh post-mapping replay of **TUI UX refresh** and **PE and weekday calendar** together on `1a7f9fc`. All **23 requirement groups and 87 named check/evidence pairs** passed against the new logs. The entire 16-gate live verifier ran, including actual historical/current terminal comparison in debug and release. The report names each check and records its observed public output, rather than relying on aggregate test totals. The historical 0-column display became the requested five-column table, the query moved into the top bar, and identical pane-navigation input stopped deselecting a subject. Every PE, date, export, component-label, and preservation check was replayed over the same complete result.
+
 ## PE and weekday calendar: 2026-09-09
 
 Verified on **macOS arm64** with the complete `RUST_TEST_NOCAPTURE=1 bash scripts/verify-mvp.sh --live` replay: **86 local tests + all 3 opt-in tests = 89 passing tests**, with **all 16 verification gates passing**. This includes strict Clippy, formatting, locked release build, release PE/CLI/native-terminal regressions, and isolated installed-binary checks. The executable in `target/release` was rebuilt.

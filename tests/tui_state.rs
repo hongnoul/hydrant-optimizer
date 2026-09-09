@@ -364,12 +364,20 @@ fn vim_and_arrow_navigation_are_equivalent_in_every_pane() {
     ] {
         state.focus = Focus::Subjects;
         for focus in [Focus::Selected, Focus::Timetable, Focus::Subjects] {
-            let next = if state.focus == Focus::Timetable { KeyCode::Tab } else { right };
+            let next = if state.focus == Focus::Timetable {
+                KeyCode::Tab
+            } else {
+                right
+            };
             state.handle_key(key(next)).unwrap();
             assert_eq!(state.focus, focus);
         }
         for focus in [Focus::Timetable, Focus::Selected, Focus::Subjects] {
-            let previous = if state.focus == Focus::Timetable { KeyCode::BackTab } else { left };
+            let previous = if state.focus == Focus::Timetable {
+                KeyCode::BackTab
+            } else {
+                left
+            };
             state.handle_key(key(previous)).unwrap();
             assert_eq!(state.focus, focus);
         }

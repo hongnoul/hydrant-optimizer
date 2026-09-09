@@ -41,16 +41,20 @@ fn lines(app: &AppState, width: u16) -> Vec<Line<'static>> {
                 )],
             };
         }
-        return vec![Line::from(format!(
+        let mut sheet = week::week_lines_focused(&[], width, None, None);
+        sheet.push(Line::from(format!(
             "No feasible timetable: {:?}.",
             solution.status
-        ))];
+        )));
+        return sheet;
     }
-    vec![Line::from(if app.optimize_running {
+    let mut sheet = week::week_lines_focused(&[], width, None, None);
+    sheet.push(Line::from(if app.optimize_running {
         "Optimizing. The timetable will appear here."
     } else {
         "No timetable yet. Select classes to optimize automatically."
-    })]
+    }));
+    sheet
 }
 
 pub(super) fn draw(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
@@ -70,13 +74,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
     let reveal_row = if app.timetable_navigation.reveal {
         blocks
             .get(app.timetable_navigation.block)
-            .and_then(|block| {
-                blocks
-                    .iter()
-                    .map(|b| b.start / 30)
-                    .min()
-                    .map(|first| 3 + block.start / 30 - first)
-            })
+            .map(|block| 3 + block.start / 30)
     } else {
         None
     };
@@ -450,6 +448,17 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 8)).unwrap();
         terminal.draw(|f| draw(f, &mut app, f.area())).unwrap();
         assert!(app.timetable_viewport.offset > 0);
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(
+            screen.contains("18:00"),
+            "selected session must be visible: {screen}"
+        );
         press(&mut app, KeyCode::Up);
         assert_eq!(
             app.session_blocks()[app.timetable_navigation.block].start,

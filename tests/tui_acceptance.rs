@@ -573,7 +573,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     let mut args = source.to_vec();
     args.extend(["tui", "--select", "W", "--select", "X"]);
     let output = dir.join("week.ics");
-    let mut ui = Driver::with_size(dir, &output, 72, 120, &args);
+    let mut ui = Driver::with_size(dir, &output, 110, 120, &args);
     ui.marker("Optimal:");
     ui.send(b"/week\r");
     ui.until("query visible in top search bar", |s| {
@@ -606,7 +606,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     let screen = ui.screen.screen().contents();
     let headers = week_row(&screen, "Time").unwrap();
     assert_eq!(headers, ["Time", "Mon", "Tue", "Wed", "Thu", "Fri"]);
-    let row_times: Vec<_> = (540..690)
+    let row_times: Vec<_> = (0..1440)
         .step_by(30)
         .map(|minute| format!("{:02}:{:02}", minute / 60, minute % 60))
         .collect();
@@ -957,7 +957,7 @@ fn actual_tui_timetable_scrolls_and_resets_independently_of_subject_lists() {
     let subjects_top = pane_contents(&screen, "Subjects");
     let selected_top = pane_contents(&screen, "Selected");
     let timetable_top = pane_contents(&screen, "Timetable");
-    assert!(week_row(&timetable_top, "09:00").is_some());
+    assert!(week_row(&timetable_top, "00:00").is_some());
 
     for (down, up) in [
         (b"j".as_slice(), b"k".as_slice()),
@@ -1139,7 +1139,7 @@ fn actual_tui_80x24_navigates_sessions_and_exports_with_unknown_subjects() {
     ui.send(b"t");
     ui.until("weekday 30-minute grid", |s| {
         s.contains("> Timetable")
-            && ["Mon", "Tue", "Wed", "Thu", "Fri", "09:00", "09:30"]
+            && ["Mon", "Tue", "Wed", "Thu", "Fri", "00:00", "00:30"]
                 .iter()
                 .all(|label| s.contains(label))
     });
@@ -1531,7 +1531,7 @@ fn actual_tui_nested_navigation_cycles_optima_blocks_and_fixed_time_members() {
                     .cell(row as u16, column as u16)
                     .unwrap()
                     .bgcolor()
-                    == vt100::Color::Idx(3)
+                    == vt100::Color::Idx(15)
                 {
                     return;
                 }

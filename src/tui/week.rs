@@ -78,21 +78,6 @@ pub(super) fn week_lines_focused(
             entry.selected &= entry.day == day as usize && entry.start == start && entry.end == end;
         }
     }
-    if entry_set.weekdays.is_empty() {
-        if entry_set.weekend_count > 0 {
-            lines.push(plain_line(
-                "Weekday view: no Monday-Friday meetings to show.",
-                width,
-            ));
-            lines.push(plain_line(
-                &weekend_disclosure(entry_set.weekend_count),
-                width,
-            ));
-            return lines;
-        }
-        lines.push(plain_line("No weekly meetings to show.", width));
-        return lines;
-    }
     let entries = entry_set.weekdays;
 
     let Some(plan) = ColumnPlan::new(width) else {
@@ -109,17 +94,12 @@ pub(super) fn week_lines_focused(
         return lines;
     };
 
-    let min_start = entries.iter().map(|entry| entry.start).min().unwrap_or(0);
-    let max_end = entries.iter().map(|entry| entry.end).max().unwrap_or(0);
-    let first_slot = (min_start / SLOT_MINUTES) * SLOT_MINUTES;
-    let last_slot = max_end.div_ceil(SLOT_MINUTES) * SLOT_MINUTES;
-
     lines.push(border_line(&plan, '┌', '┬', '┐'));
     lines.push(header_line(&plan));
     lines.push(border_line(&plan, '├', '┼', '┤'));
 
-    let mut slot = first_slot;
-    while slot < last_slot {
+    let mut slot = 0;
+    while slot < 24 * 60 {
         lines.push(row_line(&plan, &entries, slot));
         slot = slot.saturating_add(SLOT_MINUTES);
     }
@@ -547,6 +527,24 @@ mod tests {
     }
 
     #[test]
+    fn sheet_rows_are_identical_for_empty_sparse_and_full_day_schedules() {
+        for meetings in [
+            vec![],
+            vec![meeting(2, 555, 646)],
+            vec![meeting(0, 0, 1440)],
+        ] {
+            let lines = week_lines(&[section("A", "lecture", "L1", meetings)], 80, None);
+            assert_eq!(lines.len(), 52);
+            for slot in 0..48 {
+                assert_eq!(
+                    row_index(&lines, &format_time(slot * 30)),
+                    3 + slot as usize
+                );
+            }
+        }
+    }
+
+    #[test]
     fn focused_block_highlights_only_one_occurrence() {
         let sections = [section(
             "A",
@@ -700,8 +698,8 @@ mod tests {
         );
         assert_eq!(
             lines.len(),
-            5,
-            "only table borders, header, and one time row"
+            52,
+            "table borders, header, and 48 fixed half-hour rows"
         );
         assert!(text(&lines[0]).starts_with('┌'));
         assert!(text(lines.last().unwrap()).starts_with('└'));
@@ -831,13 +829,13 @@ mod tests {
         let rendered = all_text(&lines);
         assert!(rendered.contains("1 weekend meeting hidden here. Export keeps them."));
         assert!(rendered.contains("09:00"));
-        assert!(!rendered.contains("23:30"));
+        assert!(rendered.contains("23:30"));
         assert!(!rendered.contains("Sat"));
         assert!(!rendered.contains("Sun"));
     }
 
     #[test]
-    fn only_weekend_input_shows_disclosure_without_time_rows() {
+    fn only_weekend_input_shows_full_sheet_and_disclosure() {
         let lines = week_lines(
             &[
                 section("21W.755", "seminar", "S1", vec![meeting(5, 600, 660)]),
@@ -847,11 +845,10 @@ mod tests {
             None,
         );
         let rendered = all_text(&lines);
-        assert!(rendered.contains("no Monday-Friday meetings"));
         assert!(rendered.contains("2 weekend meetings hidden here. Export keeps them."));
-        assert!(!rendered.contains("│10:00"));
-        assert!(!rendered.contains("│23:30"));
-        assert!(!rendered.contains("┌"));
+        assert!(rendered.contains("│10:00"));
+        assert!(rendered.contains("│23:30"));
+        assert!(rendered.contains("┌"));
         assert!(!rendered.contains("Lec="));
     }
 
@@ -953,7 +950,9 @@ mod tests {
     fn empty_input_is_graceful() {
         let lines = week_lines(&[], 78, None);
         let rendered = all_text(&lines);
-        assert!(rendered.contains("No weekly meetings"));
+        assert!(rendered.contains("00:00"));
+        assert!(rendered.contains("23:30"));
+        assert_eq!(lines.len(), 52);
         assert!(lines.iter().all(|line| line.width() <= 78));
     }
 }

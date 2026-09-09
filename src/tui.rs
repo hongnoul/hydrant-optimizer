@@ -1772,8 +1772,8 @@ mod viewport_tests {
         for day in ["Mon", "Tue", "Wed", "Thu", "Fri"] {
             assert!(screen.contains(day), "missing {day}: {screen}");
         }
-        assert!(screen.contains("09:00"));
-        assert!(screen.contains("09:30"));
+        assert!(screen.contains("00:00"));
+        assert!(screen.contains("00:30"));
         press(&mut state, KeyCode::Char('l'));
         assert!(render(&mut state, 80, 24).contains("> Selected classes"));
         press(&mut state, KeyCode::Right);
@@ -1885,12 +1885,16 @@ mod viewport_tests {
                 assert!(rows[2].starts_with("│Time"));
                 assert_eq!(rows[2].matches('│').count(), 7, "no extra parent sides");
                 assert_eq!(state.timetable_viewport.height, height - 1);
-                assert_eq!(state.timetable_viewport.max_offset, 0);
-                let bottom = rows.iter().position(|row| row.starts_with('└')).unwrap();
-                assert!(
-                    rows[bottom + 1..].iter().all(|row| row.trim().is_empty()),
-                    "no legend, parent sides, or bottom border beneath the grid"
+                assert_eq!(
+                    state.timetable_viewport.max_offset,
+                    52u16.saturating_sub(height - 1)
                 );
+                if let Some(bottom) = rows.iter().position(|row| row.starts_with('└')) {
+                    assert!(
+                        rows[bottom + 1..].iter().all(|row| row.trim().is_empty()),
+                        "no legend, parent sides, or bottom border beneath the grid"
+                    );
+                }
             }
         }
     }
@@ -1938,7 +1942,7 @@ mod viewport_tests {
         assert!(state.solution.is_none());
         assert_eq!(state.timetable_viewport.offset, 0);
         assert_eq!(state.timetable_viewport.max_offset, 0);
-        assert!(render(&mut state, 80, 24).contains("No timetable yet"));
+        assert!(render(&mut state, 80, 24).contains("00:00"));
         for (width, height) in [(36, 12), (12, 5), (1, 1), (0, 0)] {
             render(&mut state, width, height);
         }

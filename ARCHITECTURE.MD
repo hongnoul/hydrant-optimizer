@@ -92,3 +92,5 @@ Reject or disclose ambiguous/nonexistent local times, missing calendar bounds, a
 Write output atomically and never overwrite an existing file. Export does not mutate a user's calendar account. Release artifacts are native executables per target; only platforms actually built and exercised are claimed as verified.
 
 CLI `--export` invokes calendar writing only for a completed feasible result. Infeasible optimization retains its explicit text/JSON, unresolved notices, and exit code 2 without touching the output path.
+
+The timetable uses a fixed Monday–Friday sheet with 48 half-hour rows spanning 00:00–24:00, including empty schedules. Session navigation scrolls to the selected block within that fixed sheet. PgUp/PgDn and Home/End browse the full day without changing the schedule.

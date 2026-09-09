@@ -24,7 +24,27 @@ For the combined weekly pattern of all supported selected meetings, minimize lex
 gap(day) = last end - first start - occupied meeting minutes
 ```
 
-Count weekends if used. Empty days contribute zero; ignore time outside the first/last meeting. Fewer days always outrank fewer gaps. Intervals are `[start,end)`, so adjacent meetings do not conflict. Fully dated PE is supported: date ranges constrain feasibility and export, while the score uses the union of its selected quarters' weekly patterns. This is not a sum or average of per-date/per-quarter costs. Other partial-term academic options remain unsupported and disclosed as specified in README.MD.
+Count weekends if used. Empty days contribute zero; ignore time outside the first/last meeting. Fewer days always outrank fewer gaps. Intervals are `[start,end)`, so adjacent meetings do not conflict. Fully dated PE is supported: date ranges constrain feasibility and export, while the score uses the union of its selected quarters' weekly patterns. This is not a sum or average of per-date/per-quarter costs. Other partial-term academic options remain unsupported and disclosed as specified in [Boundaries](#boundaries).
+
+## Scheduling contract
+
+- Search subject numbers/titles and preserve selected subjects across searches.
+- Minimize **occupied days first, then total gaps between classes**, strictly in that order. Weekends count. Adjacent meetings do not conflict.
+- Collapse only interchangeable complete time patterns. After optimization, switch actual sections/rooms without changing the timetable or violating pairing restrictions.
+- Manual sections use the same normalized model as published sections. Alternative sections may contain several meetings. Keep known components when supplying TBA information.
+- Show selected sections, timetable, score, unresolved-time notices, and explicit infeasibility. An interrupted search never claims optimality.
+- Export only selected, known, supported meetings. Calendar export uses `America/New_York`, semester bounds, holidays and alternate-weekday dates. Every export filename carries a Unix-time signature, so repeats never overwrite. ICS exports contain meeting details only, without color metadata or color hints. Calendar apps control imported event colors independently of the TUI's per-course colors.
+- Infeasible CLI optimization returns explicit text/JSON and exit code **2**, including with `--export`. No calendar is created or modified for an infeasible result.
+
+## Boundaries
+
+**Assume Hydrant's data is accurate.** Fetch its public JSON. No independent scraping, cross-source verification, separate validation service, Kerberos, or login. Schema and user-input validation are local application responsibilities, not a second source of schedule truth.
+
+TBA means missing information. Conflict checks and optimality cover only known, supported options. Scheduling supports full-term academic meetings and fully dated PE offerings. Other date-limited academic options are preserved and explicitly omitted rather than silently treated as full-term. Manual date bounds can be recorded with `--start-date` / `--end-date`. General partial-term academic optimization remains unsupported.
+
+No registration, seats, degree planning, PE credit tracking, travel objective, or cloud sync. The application does not import events into a calendar account or send anything beyond requests for public catalog data.
+
+For CLI examples, terminal controls, storage, calendar behavior, and verification commands, see the [user guide](docs/usage.md).
 
 ## Baseline
 

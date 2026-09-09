@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Local exact MIT course scheduler with a terminal UI and calendar export"
+license = "MIT"
+repository = "https://github.com/hongnoul/hydrant-optimizer"
 
 [dependencies]
 anyhow = "1"

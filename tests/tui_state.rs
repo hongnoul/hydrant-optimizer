@@ -271,13 +271,12 @@ fn same_time_member_switching_updates_mapping_and_selection_invalidates_result()
         unresolved: vec!["notice".to_string()],
     });
 
-    state.focus = Focus::Results;
-    state.handle_key(key(KeyCode::Char('n'))).unwrap();
+    state.cycle_current_member(1);
     assert_eq!(
         state.actual_members.get("A/lecture").map(String::as_str),
         Some("A-L2")
     );
-    state.handle_key(key(KeyCode::Char('p'))).unwrap();
+    state.cycle_current_member(-1);
     assert_eq!(
         state.actual_members.get("A/lecture").map(String::as_str),
         Some("A-L1")
@@ -333,17 +332,11 @@ fn vim_and_arrow_navigation_are_equivalent_in_every_pane() {
         unresolved: Vec::new(),
     });
     state.selected.extend(["A".to_string(), "B".to_string()]);
-    for focus in [
-        Focus::Subjects,
-        Focus::Selected,
-        Focus::Manual,
-        Focus::Results,
-    ] {
+    for focus in [Focus::Subjects, Focus::Selected, Focus::Manual] {
         state.focus = focus;
         let cursor = |state: &AppState| match focus {
             Focus::Subjects => state.cursor,
             Focus::Manual => state.manual_cursor,
-            Focus::Results => state.result_cursor,
             Focus::Selected => state.selected_cursor,
             Focus::Search | Focus::Timetable => unreachable!(),
         };
@@ -364,22 +357,14 @@ fn vim_and_arrow_navigation_are_equivalent_in_every_pane() {
         (KeyCode::BackTab, KeyCode::Tab),
     ] {
         state.focus = Focus::Subjects;
-        for focus in [
-            Focus::Selected,
-            Focus::Results,
-            Focus::Timetable,
-            Focus::Subjects,
-        ] {
-            state.handle_key(key(right)).unwrap();
+        for focus in [Focus::Selected, Focus::Timetable, Focus::Subjects] {
+            let next = if state.focus == Focus::Timetable { KeyCode::Tab } else { right };
+            state.handle_key(key(next)).unwrap();
             assert_eq!(state.focus, focus);
         }
-        for focus in [
-            Focus::Timetable,
-            Focus::Results,
-            Focus::Selected,
-            Focus::Subjects,
-        ] {
-            state.handle_key(key(left)).unwrap();
+        for focus in [Focus::Timetable, Focus::Selected, Focus::Subjects] {
+            let previous = if state.focus == Focus::Timetable { KeyCode::BackTab } else { left };
+            state.handle_key(key(previous)).unwrap();
             assert_eq!(state.focus, focus);
         }
     }

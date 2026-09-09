@@ -2,6 +2,8 @@
 
 A local **Rust** MIT course scheduler. Select a fixed set of subjects, supply missing section times, find an exact compact weekly timetable, and export a local `.ics` file. No Python runtime, server, or solver service is required.
 
+**The working demo is a terminal user interface (TUI), not a hosted web app.** The optimizer is open source under the [MIT License](LICENSE), so anyone can reuse it to build another interface, such as a web app. The Rust library exposes the scheduling model and optimizer independently of the TUI through `hydrant_optimizer::model` and `hydrant_optimizer::optimizer`. A web backend can call that library, or integrate with the CLI's JSON output. A web frontend and hosting are not included in this demo.
+
 Read [ARCHITECTURE.MD](ARCHITECTURE.MD) for the module boundaries and [OPTIMIZER.MD](OPTIMIZER.MD) for the exactness contract.
 
 ## Build and run
@@ -45,27 +47,27 @@ Use `./target/release/hydrant-optimizer` in place of `hydrant-optimizer` unless 
 |---|---|
 | `/` | Focus the top search bar. Ctrl+U clears the query. Type a number/title, then Enter to return to the list. |
 | Up/Down or `k`/`j` | Move through the focused list, or scroll the timetable. Space/Enter adds a subject or removes a selected class. |
-| Left/Right or `h`/`l` | Focus the previous/next pane: Subjects, Selected classes, Results, Timetable. The active pane has a cyan border (heading for Timetable) and `>` title marker. |
-| Tab / Shift+Tab | Cycle Subjects, Selected classes, Results, Timetable panels. |
+| Left/Right or `h`/`l` | Focus the previous/next pane: Subjects, Selected classes, Timetable. The active pane has a cyan border (heading for Timetable) and `>` title marker. |
+| Tab / Shift+Tab | Cycle Subjects, Selected classes, Timetable panels. |
 | `s` | Focus Selected classes. This list stays visible independently of the search filter. |
 | `a` / `m` | Add a manual section for the highlighted class / open retained manual entries in an overlay. Escape or `m` closes the overlay. |
 | Enter / `x` in Manual | Edit an entry / toggle enabled state. |
 | `o` | Optimize in the background, or cancel an already running search. |
 | `c` | Cancel a running search. No optimum is claimed for cancelled work. |
-| `r` / `t` | Focus Results / Timetable and reset only that pane to its top. |
-| `n`/`p` in Results | Switch an interchangeable actual section and reveal its label/room. Up/Down or `k`/`j` chooses the component. |
-| PgUp/PgDn in Results or Timetable | Scroll the focused pane independently. Results contains exact details, the section picker, notices, and export details. |
-| Home/End in Results or Timetable | Jump to the first/last line in that pane. In Results, Up/Down selects a section and keeps it visible. |
+| `t` | Focus Timetable and reset its scroll position. |
+| Enter in Timetable | Navigate blocks, then same-time members. Use h/l to switch members and Escape to go back. |
+| PgUp/PgDn in Timetable | Scroll the timetable. |
+| Home/End in Timetable | Jump to the first/last line. |
 | `e` | Export the chosen sections to `--output`. |
 | `?` / `q` | Help / quit. Escape closes search, help, an editor, or the manual overlay first. Otherwise it quits. |
 
 The manual editor's fields are Subject, Component, Section label, Meetings, Room, Start date, End date. Tab/Shift+Tab changes fields, Ctrl+U clears one, Enter or Ctrl+S saves, and Escape cancels. Enter multiple meetings separated by semicolons. Selection survives catalog searches. Selection or manual changes invalidate the previous timetable until re-optimization.
 
-The top search bar replaces the old status panel. Navigation letters remain ordinary text while searching or editing. Action feedback stays in the footer and the scrollable results details.
+The top search bar replaces the old status panel. Navigation letters remain ordinary text while searching or editing. Action feedback stays in the footer.
 
-Subjects, Selected classes, and Results share the upper row. Optimized schedules appear below them as a **separate edge-to-edge timetable**, without an outer container or legend. A single heading shows focus and scroll position above the grid. **Monday–Friday columns and 30-minute rows** span the earliest through latest chosen weekday meetings. Colored cells show subject numbers and components: **Lec**, **Rec**, **Lab**, **PE**, or another component label. Narrow cells shorten the subject number before the component. Exact times, full component names, section labels, and rooms are listed in Results. Off-grid meetings occupy each intersecting half-hour cell without changing their actual times. A `2×` (or higher) marker indicates multiple meetings sharing a half-hour cell, not necessarily a scheduling conflict. Crowded cells retain a component summary rather than suggesting incorrect subject/component pairings. Weekend meetings are explicitly disclosed outside the grid and remain in optimization, exact details, and export.
+Subjects and Selected classes share the upper row equally. Optimized schedules appear below them as a **separate edge-to-edge timetable**, without an outer container or legend. A single heading shows focus and scroll position above the grid. **Monday–Friday columns and 30-minute rows** span the earliest through latest chosen weekday meetings. Colored cells show subject numbers and components: **Lec**, **Rec**, **Lab**, **PE**, or another component label. Narrow cells shorten the subject number before the component. Off-grid meetings occupy each intersecting half-hour cell without changing their actual times. A `2×` (or higher) marker indicates multiple meetings sharing a half-hour cell, not necessarily a scheduling conflict. Crowded cells retain a component summary rather than suggesting incorrect subject/component pairings. Weekend meetings are explicitly disclosed outside the grid and remain in optimization and export.
 
-Results and Timetable have independent scroll positions at **80×24**, so paging through result notices never scrolls away the calendar. Results retains all unresolved-time, source/cache, and export notices. The results heading shows the notice count, and the bottom border shows the scroll position. Long action messages and output paths remain available in the scrollable view.
+The timetable scrolls at **80×24** using PgUp/PgDn and Home/End. The Results pane and its shortcuts have been removed. Full machine-readable optimization details remain available through the CLI.
 
 ### PE classes
 

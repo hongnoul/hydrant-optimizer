@@ -18,6 +18,8 @@ child=''
 builder=''
 # Fix the output directory so CARGO_TARGET_DIR cannot make us launch a stale binary.
 target="$PWD/target/tui-dev"
+mkdir -p "$target"
+build_log="$target/build.log"
 restore_terminal() {
   stty "$saved_tty" 2>/dev/null || true
   printf '\033[?1000l\033[?1002l\033[?1003l\033[?1015l\033[?1006l\033[?1049l\033[?25h\033[0m'
@@ -62,7 +64,7 @@ while true; do
     last=$current
     stop_child
     printf '\n[dev-tui] Building debug TUI...\n'
-    cargo build --locked --bin hydrant-optimizer --target-dir "$target" &
+    cargo build --locked --bin hydrant-optimizer --target-dir "$target" >"$build_log" 2>&1 &
     builder=$!
     if wait "$builder"; then
       builder=''
@@ -73,7 +75,7 @@ while true; do
       child=$!
     else
       builder=''
-      printf '\n[dev-tui] Build failed. Fix and save a watched file to retry. Ctrl+C quits.\n'
+      printf '\n[dev-tui] Build failed. See target/tui-dev/build.log. Save to retry. Ctrl+C quits.\n'
     fi
   fi
   if [[ -n $child ]] && ! kill -0 "$child" 2>/dev/null; then

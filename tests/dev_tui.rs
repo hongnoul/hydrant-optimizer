@@ -52,6 +52,7 @@ fn run_watcher(quit: &[u8], real: bool) {
     fs::write(
         path.join("bin/cargo"),
         r#"#!/bin/sh
+echo BUILD_OUTPUT_SHOULD_BE_HIDDEN
 if grep -q broken src/change.rs; then echo EXPECTED_BUILD_ERROR; exit 1; fi
 mkdir -p target/tui-dev/debug
 cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
@@ -126,6 +127,8 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
                 );
                 if let Ok(bytes) = rx.recv_timeout(Duration::from_millis(100)) {
                     output.push_str(&String::from_utf8_lossy(&bytes));
+                    assert!(!output.contains("BUILD_OUTPUT_SHOULD_BE_HIDDEN"));
+                    assert!(!output.contains("EXPECTED_BUILD_ERROR"));
                     if output.contains("\x1b[6n") {
                         writer.lock().unwrap().write_all(b"\x1b[1;1R").unwrap();
                         output = output.replace("\x1b[6n", "");
@@ -146,6 +149,15 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
         until(if real { "ReloadVerified" } else { "Subjects" });
         fs::write(&watched, "broken").unwrap();
         until("Build failed.");
+        let log = fs::read_to_string(path.join("target/tui-dev/build.log")).unwrap();
+        assert!(
+            log.contains(if real {
+                "error"
+            } else {
+                "EXPECTED_BUILD_ERROR"
+            }),
+            "missing build diagnostics: {log}"
+        );
         fs::write(&watched, &original).unwrap();
         until("Subjects");
         writer.lock().unwrap().write_all(quit).unwrap();

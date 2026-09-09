@@ -60,6 +60,8 @@ Verify the watcher with `cargo test --locked --test dev_tui`. Add `-- --include-
 
 Reloads reset in-memory selections, search, scroll position, and unsaved editor input. Use `tui --select SUBJECT` (repeatable) to restore a preview selection. Saved manual entries remain in the normal data directory. Pass `--data-dir PATH` to isolate development data if desired.
 
+See [the TUI development guide](docs/tui-development.md) for the launcher, hidden build logs, and reload behavior.
+
 ### Terminal controls
 
 | Key | Action |

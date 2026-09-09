@@ -221,7 +221,7 @@ fn assert_removed_shortcuts_ignored(ui: &mut Driver) {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    for key in [b'r', b'n', b'p'] {
+    for key in *b"rnp" {
         let before = ui.screen.screen().contents();
         // Opening then closing help is a round-trip barrier. Merely waiting for
         // an unchanged screen could pass before the removed key is processed.
@@ -1242,5 +1242,179 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
     println!(
         "TUI_ACCEPTANCE subjects=2 selection_across_search=true multiword_search=true manual_editor=true disabled_edit_preserved=true scope_move_rejected=true stale_export_rejected=true reoptimization=true exact_score={} member_switch=true events={events} no_clobber=true termios_restored=true alternate_screen_restored=true",
         reference["solution"]["score"]
+    );
+}
+
+#[test]
+fn actual_tui_nested_navigation_cycles_optima_blocks_and_fixed_time_members() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    let catalog_path = dir.join("navigation.json");
+    let mut catalog: Value = serde_json::from_str(include_str!("fixtures/catalog.json")).unwrap();
+    catalog["classes"] = serde_json::json!({
+        "N": {"number":"N", "name":"Navigation", "sectionKinds":["lecture"], "lectureSections":[]}
+    });
+    fs::write(&catalog_path, catalog.to_string()).unwrap();
+    let source = [
+        "--catalog",
+        catalog_path.to_str().unwrap(),
+        "--term",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/term.json"),
+    ];
+    for (label, room, meetings) in [
+        (
+            "Early one",
+            "Early room one",
+            "Mon 09:00-09:30;Mon 10:00-10:30;Wed 10:00-10:30",
+        ),
+        (
+            "Early two",
+            "Early room two",
+            "Mon 09:00-09:30;Mon 10:00-10:30;Wed 10:00-10:30",
+        ),
+        (
+            "Late one",
+            "Late room one",
+            "Mon 11:00-11:30;Mon 12:00-12:30;Wed 12:00-12:30",
+        ),
+        (
+            "Late two",
+            "Late room two",
+            "Mon 11:00-11:30;Mon 12:00-12:30;Wed 12:00-12:30",
+        ),
+    ] {
+        let mut args = source.to_vec();
+        args.extend([
+            "manual",
+            "add",
+            "--course",
+            "N",
+            "--kind",
+            "lecture",
+            "--label",
+            label,
+            "--room",
+            room,
+            "--meetings",
+            meetings,
+        ]);
+        cli(dir, &args);
+    }
+    let mut args = source.to_vec();
+    args.extend(["optimize", "N"]);
+    let reference = cli(dir, &args);
+    let alternatives = reference["solution"]["alternatives"].as_array().unwrap();
+    assert_eq!(alternatives.len(), 2);
+    let second = &alternatives[1][0];
+    let first_time = second["meetings"][0]["start_minute"].as_u64().unwrap();
+    let next_time = second["meetings"][1]["start_minute"].as_u64().unwrap();
+    let time = |minutes: u64| format!("{:02}:{:02}", minutes / 60, minutes % 60);
+    let output = dir.join("navigation.ics");
+    let mut args = source.to_vec();
+    args.extend(["tui", "--select", "N"]);
+    let mut ui = Driver::with_size(dir, &output, 40, 140, &args);
+    ui.marker("Preselected 1 subject(s)");
+    ui.send(b"ot");
+    ui.marker("> Timetable 1/2");
+    for (key, expected) in [
+        (b"l".as_slice(), "2/2"),
+        (b"\x1b[D".as_slice(), "1/2"),
+        (b"\x1b[C".as_slice(), "2/2"),
+        (b"h".as_slice(), "1/2"),
+        (b"l".as_slice(), "2/2"),
+    ] {
+        ui.send(key);
+        ui.marker(&format!("> Timetable {expected}"));
+    }
+    ui.send(b"\r");
+    ui.marker("Sessions: Enter options");
+
+    // Observe the actual terminal's yellow focus cell, not internal AppState.
+    fn selected_cell(ui: &mut Driver, time: &str, day: usize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let screen = ui.screen.screen().contents();
+            if let Some((row, line)) = screen
+                .lines()
+                .enumerate()
+                .find(|(_, line)| line.starts_with(&format!("│{time}│")))
+            {
+                let column = line
+                    .chars()
+                    .enumerate()
+                    .filter(|(_, c)| *c == '│')
+                    .nth(day + 1)
+                    .unwrap()
+                    .0
+                    + 1;
+                if ui
+                    .screen
+                    .screen()
+                    .cell(row as u16, column as u16)
+                    .unwrap()
+                    .bgcolor()
+                    == vt100::Color::Idx(3)
+                {
+                    return;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "selected block missing at {time}/{day}\n{screen}"
+            );
+            if let Ok(bytes) = ui.output.recv_timeout(Duration::from_millis(50)) {
+                ui.screen.process(&bytes);
+                ui.raw.extend(bytes);
+            }
+        }
+    }
+    selected_cell(&mut ui, &time(first_time), 0);
+    for (keys, minutes, day) in [
+        (b"j".as_slice(), next_time, 0),
+        (b"\x1b[A".as_slice(), first_time, 0),
+        (b"\x1b[B".as_slice(), next_time, 0),
+        (b"l".as_slice(), next_time, 2),
+        (b"\x1b[D".as_slice(), next_time, 0),
+        (b"\x1b[C".as_slice(), next_time, 2),
+        (b"h".as_slice(), next_time, 0),
+        (b"k".as_slice(), first_time, 0),
+    ] {
+        ui.send(keys);
+        selected_cell(&mut ui, &time(minutes), day);
+    }
+    ui.send(b"\r");
+    ui.marker("Options: h/l switch");
+    let member = &second["members"][1];
+    ui.send(b"l");
+    ui.marker(&format!(
+        "N/lecture now uses {}.",
+        member["label"].as_str().unwrap()
+    ));
+    ui.send(b"\x1b[D");
+    ui.marker(&format!(
+        "N/lecture now uses {}.",
+        second["members"][0]["label"].as_str().unwrap()
+    ));
+    ui.send(b"\x1b[C");
+    ui.marker(&format!(
+        "N/lecture now uses {}.",
+        member["label"].as_str().unwrap()
+    ));
+    ui.send(b"e");
+    ui.marker("Exported");
+    let calendar = fs::read_to_string(&output).unwrap();
+    assert!(calendar.contains(&format!("LOCATION:{}", member["room"].as_str().unwrap())));
+    assert!(calendar.contains(&format!("T{:02}0000Z", first_time / 60 + 4)));
+    ui.send(b"\x1b");
+    ui.marker("Sessions: Enter options");
+    ui.send(b"\x1b");
+    ui.marker("Enter sessions");
+    ui.send(b"\t");
+    ui.marker("> Subjects");
+    ui.send(b"q");
+    ui.marker("TERMINAL_RESTORED");
+    assert!(ui.child.wait().unwrap().success());
+    println!(
+        "UX_OBSERVATION nested_navigation: real executable, 2 equal optima, all hjkl/arrows verified by terminal focus color, fixed-time member and exported room/time verified, Escape backs out, Tab exits, terminal restored"
     );
 }

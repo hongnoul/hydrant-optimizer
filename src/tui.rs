@@ -30,7 +30,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 
-use crate::{app, model::*, storage};
+use crate::{app, model::*, session::SelectionSession, storage};
 
 mod timetable;
 mod week;
@@ -206,6 +206,10 @@ impl ScrollViewport {
 #[derive(Debug)]
 pub struct AppState {
     base: Dataset,
+    selection_session: Option<SelectionSession>,
+    selection_saved: bool,
+    unavailable_selected: BTreeSet<String>,
+    pub selection_notice: Option<String>,
     pub dataset: Dataset,
     pub manual: ManualStore,
     pub data_dir: PathBuf,
@@ -257,6 +261,10 @@ impl AppState {
         }
         let mut state = Self {
             base,
+            selection_session: None,
+            selection_saved: false,
+            unavailable_selected: BTreeSet::new(),
+            selection_notice: None,
             dataset,
             manual,
             data_dir,
@@ -291,6 +299,95 @@ impl AppState {
             );
         }
         Ok(state)
+    }
+
+    /// The ordinary constructor remains side-effect free for library callers.
+    /// The executable opts into durable selections through this constructor.
+    pub fn new_with_session(
+        base: Dataset,
+        manual: ManualStore,
+        data_dir: PathBuf,
+        output: PathBuf,
+        initial: Vec<String>,
+        no_restore: bool,
+    ) -> Result<Self> {
+        // An explicit typo must not replace a valid saved selection with empty state.
+        for id in &initial {
+            ensure!(
+                base.courses
+                    .keys()
+                    .any(|known| known.eq_ignore_ascii_case(id)),
+                "unknown initial subject {id}; saved selections were not changed"
+            );
+        }
+        if no_restore {
+            let mut state = Self::new(base, manual, data_dir, output, initial)?;
+            state.selection_notice = Some("Ephemeral selections (--no-restore): not saved".into());
+            return Ok(state);
+        }
+        let (session, error) = match SelectionSession::open(&data_dir) {
+            Ok(session) => (Some(session), None),
+            Err(error) => (None, Some(format!("Selections NOT saved: {error:#}"))),
+        };
+        let restoring = initial.is_empty();
+        let requested = if restoring {
+            session
+                .as_ref()
+                .and_then(|s| s.selected(&base.term_id))
+                .map(|ids| ids.iter().cloned().collect())
+                .unwrap_or_default()
+        } else {
+            initial
+        };
+        let unavailable = requested
+            .iter()
+            .filter(|id| {
+                !base
+                    .courses
+                    .keys()
+                    .any(|known| known.eq_ignore_ascii_case(id))
+            })
+            .cloned()
+            .collect();
+        let mut state = Self::new(base, manual, data_dir, output, requested)?;
+        state.selection_session = session;
+        state.unavailable_selected = unavailable;
+        state.selection_notice = error;
+        if restoring && !state.selected.is_empty() {
+            state.status = format!(
+                "Restored {} subject(s). Optimizing automatically.",
+                state.selected.len()
+            );
+        }
+        state.persist_selection();
+        Ok(state)
+    }
+
+    /// Save synchronously before a changed selection is displayed or optimized.
+    /// A failed save leaves the UI usable, but the warning survives solver updates.
+    pub fn persist_selection(&mut self) {
+        let Some(session) = self.selection_session.as_mut() else {
+            return;
+        };
+        let selected = self
+            .selected
+            .union(&self.unavailable_selected)
+            .cloned()
+            .collect();
+        let result = session.save(&self.dataset.term_id, &selected);
+        self.selection_saved = result.is_ok();
+        self.selection_notice = match result {
+            Err(error) => Some(format!("Selections NOT saved: {error:#}")),
+            Ok(()) if !self.unavailable_selected.is_empty() => Some(format!(
+                "Unavailable saved subjects retained: {}",
+                self.unavailable_selected
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+            Ok(()) => None,
+        };
     }
 
     pub fn base(&self) -> &Dataset {
@@ -885,6 +982,7 @@ impl AppState {
     }
 
     fn invalidate(&mut self, message: &str) {
+        self.persist_selection();
         self.generation = self.generation.wrapping_add(1);
         self.timetable_viewport = ScrollViewport::default();
         self.timetable_navigation = timetable::Navigation::default();
@@ -983,13 +1081,45 @@ pub fn run(
     output: PathBuf,
     initial: Vec<String>,
 ) -> Result<()> {
-    let mut app = AppState::new(base, manual, data_dir, output, initial)?;
+    run_with_options(base, manual, data_dir, output, initial, false)
+}
+
+pub fn run_with_options(
+    base: Dataset,
+    manual: ManualStore,
+    data_dir: PathBuf,
+    output: PathBuf,
+    initial: Vec<String>,
+    no_restore: bool,
+) -> Result<()> {
+    // Do not save startup overrides if no interactive terminal can be opened.
     let mut terminal = TerminalSession::enter()?;
+    let mut app = AppState::new_with_session(base, manual, data_dir, output, initial, no_restore)?;
     let mut worker: Option<OptimizeWorker> = None;
     let tick = Duration::from_millis(100);
     let mut optimized_generation = None;
+    let mut watcher_ready = false;
 
     loop {
+        if !watcher_ready && app.selection_saved {
+            // A rebuild can interrupt the initial network/catalog load. Only
+            // suppress the launcher's seeds after they have actually been saved,
+            // and acknowledge before displaying a UI the user can edit.
+            if let Some(path) = std::env::var_os("HYDRANT_TUI_READY_FILE") {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                {
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => {
+                        return Err(error).context("acknowledge saved selections to watcher");
+                    }
+                }
+            }
+            watcher_ready = true;
+        }
         optimize_changed_selection(&mut app, &mut worker, &mut optimized_generation);
         drain_worker(&mut app, &mut worker);
         terminal.terminal.draw(|frame| draw(frame, &mut app))?;
@@ -1041,6 +1171,13 @@ pub fn run(
     }
 
     cancel_worker(&mut worker);
+    app.persist_selection();
+    // Keep failure details available after leaving the alternate screen too.
+    let notice = app.selection_notice.clone();
+    drop(terminal);
+    if let Some(notice) = notice {
+        eprintln!("{notice}");
+    }
     Ok(())
 }
 
@@ -1376,7 +1513,10 @@ fn draw_manual(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
 fn draw_footer(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     let text = vec![
         Line::from(app.status.clone()),
-        Line::from("/ search  s selected  c cancel  t timetable  e export  ? help"),
+        match &app.selection_notice {
+            Some(notice) => Line::styled(notice.clone(), Style::default().fg(Color::Yellow)),
+            None => Line::from("/ search  s selected  c cancel  t timetable  e export  ? help"),
+        },
         Line::from(if app.focus == Focus::Manual {
             "Enter edit | a add | x toggle | Esc/m close manual entries"
         } else if app.focus == Focus::Timetable {

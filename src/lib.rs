@@ -4,5 +4,6 @@ pub mod calendar;
 pub mod color;
 pub mod model;
 pub mod optimizer;
+pub mod session;
 pub mod storage;
 pub mod tui;

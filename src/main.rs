@@ -11,12 +11,15 @@ use hydrant_optimizer::{adapter, app, model::*, storage, tui};
     about = "Exact local MIT course scheduler. Run without a subcommand to open the terminal UI."
 )]
 struct Cli {
-    /// Cache and separate manual overlay directory.
+    /// Catalog cache, manual overlays, and saved TUI selections directory.
     #[arg(long, global = true)]
     data_dir: Option<PathBuf>,
     /// Use only a previously fetched catalog.
     #[arg(long, global = true)]
     offline: bool,
+    /// Open an ephemeral TUI: neither restore nor save class selections.
+    #[arg(long, global = true)]
+    no_restore: bool,
     /// Read a Hydrant JSON snapshot rather than the network (requires --term).
     #[arg(long, global = true, requires = "term")]
     catalog: Option<PathBuf>,
@@ -166,11 +169,17 @@ fn run(cli: Cli) -> Result<u8> {
     let mut manual = storage::load_manual(&dir)?;
     match cli.command {
         None | Some(Command::Tui { .. }) => {
-            let initial = match cli.command {
+            let mut initial = match cli.command {
                 Some(Command::Tui { select }) => select,
                 _ => Vec::new(),
             };
-            tui::run(base, manual, dir, cli.output, initial)?;
+            // The watcher forwards CLI arguments unchanged, but explicit seeds
+            // must not replace edits on every rebuild. It owns this environment
+            // variable and resets it to 0 for each new launcher invocation.
+            if !cli.no_restore && std::env::var("HYDRANT_TUI_RELOAD").as_deref() == Ok("1") {
+                initial.clear();
+            }
+            tui::run_with_options(base, manual, dir, cli.output, initial, cli.no_restore)?;
         }
         Some(Command::Refresh) => {
             if cli.json {

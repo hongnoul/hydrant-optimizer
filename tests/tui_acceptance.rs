@@ -22,6 +22,122 @@ struct Driver {
     screen: vt100::Parser,
     raw: Vec<u8>,
 }
+
+fn session_ui(dir: &Path, extra: &[&str]) -> Driver {
+    let mut args = vec![
+        "--catalog",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/catalog.json"),
+        "--term",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/term.json"),
+    ];
+    args.extend_from_slice(extra);
+    Driver::with_size(dir, &dir.join("unused-session-export.ics"), 40, 120, &args)
+}
+
+fn saved_selection(dir: &Path) -> Value {
+    let value: Value =
+        serde_json::from_slice(&fs::read(dir.join("sessions.json")).unwrap()).unwrap();
+    value["terms"].as_object().unwrap().values().next().unwrap()["selected"].clone()
+}
+
+fn quit_session(mut ui: Driver) {
+    ui.send(b"q");
+    ui.marker("TERMINAL_RESTORED");
+    assert!(ui.child.wait().unwrap().success());
+}
+
+#[test]
+fn actual_tui_autosaves_restores_and_keeps_cleared_selection_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ui = session_ui(dir.path(), &[]);
+    ui.marker("No classes selected.");
+    ui.send(b"/A\r ");
+    ui.marker("Optimal:");
+    assert_eq!(saved_selection(dir.path()), serde_json::json!(["A"]));
+    quit_session(ui);
+
+    let mut ui = session_ui(dir.path(), &[]);
+    ui.marker("Optimal:");
+    assert!(pane_contents(&ui.screen.screen().contents(), "Selected").contains("Algorithms"));
+    ui.send(b"s ");
+    ui.marker("No classes selected.");
+    assert_eq!(saved_selection(dir.path()), serde_json::json!([]));
+    quit_session(ui);
+
+    let mut ui = session_ui(dir.path(), &[]);
+    ui.marker("No classes selected.");
+    assert_eq!(saved_selection(dir.path()), serde_json::json!([]));
+    quit_session(ui);
+}
+
+#[test]
+fn actual_tui_explicit_seed_replaces_saved_but_ephemeral_never_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    for subject in ["A", "B"] {
+        let mut ui = session_ui(dir.path(), &["tui", "--select", subject]);
+        ui.marker("Optimal:");
+        assert_eq!(saved_selection(dir.path()), serde_json::json!([subject]));
+        quit_session(ui);
+    }
+    let before = fs::read(dir.path().join("sessions.json")).unwrap();
+    let mut ui = session_ui(dir.path(), &["--no-restore"]);
+    ui.marker("No classes selected.");
+    ui.marker("Ephemeral selections");
+    ui.send(b"/A\r ");
+    ui.marker("Optimal:");
+    quit_session(ui);
+    assert_eq!(fs::read(dir.path().join("sessions.json")).unwrap(), before);
+    let mut ui = session_ui(dir.path(), &[]);
+    ui.marker("Optimal:");
+    assert_eq!(saved_selection(dir.path()), serde_json::json!(["B"]));
+    quit_session(ui);
+}
+
+#[test]
+fn actual_tui_preserves_bad_session_files_and_keeps_warning_visible() {
+    for bytes in ["broken json", r#"{"version":99,"future_data":"precious"}"#] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sessions.json");
+        fs::write(&path, bytes).unwrap();
+        let mut ui = session_ui(dir.path(), &[]);
+        ui.marker("Selections NOT saved:");
+        ui.send(b" ");
+        ui.marker("Optimal:");
+        assert!(
+            ui.screen
+                .screen()
+                .contents()
+                .contains("Selections NOT saved:")
+        );
+        quit_session(ui);
+        assert_eq!(fs::read_to_string(path).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn actual_tui_second_writer_cannot_overwrite_an_active_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = session_ui(dir.path(), &["tui", "--select", "A"]);
+    first.marker("Optimal:");
+    let before = fs::read(dir.path().join("sessions.json")).unwrap();
+    let mut second = session_ui(dir.path(), &["tui", "--select", "B"]);
+    second.marker("Optimal:");
+    second.marker("Selections NOT saved:");
+    quit_session(second);
+    assert_eq!(fs::read(dir.path().join("sessions.json")).unwrap(), before);
+    quit_session(first);
+    let mut resumed = session_ui(dir.path(), &[]);
+    resumed.marker("Optimal:");
+    assert_eq!(saved_selection(dir.path()), serde_json::json!(["A"]));
+    assert!(
+        !resumed
+            .screen
+            .screen()
+            .contents()
+            .contains("Selections NOT saved:")
+    );
+    quit_session(resumed);
+}
 impl Driver {
     fn new(dir: &Path, output: &Path) -> Self {
         Self::with_size(dir, output, 55, 170, &[])

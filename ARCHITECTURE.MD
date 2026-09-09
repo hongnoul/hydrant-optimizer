@@ -15,6 +15,7 @@ CLI/TUI subject selection -> equivalent-time grouping -> pure exact optimizer
 | `model` | Owned, serializable domain records, explicit statuses, interval validation |
 | `adapter` | Hydrant raw JSON and calendar metadata -> normalized dataset |
 | `storage` | Public HTTP fetching, validated cache, independent manual records, merge |
+| `session` | Versioned, term-scoped selected subject IDs, atomic persistence, single-writer lock |
 | `optimizer` | Canonical grouping, minute-bitset search, deterministic exact result |
 | `calendar` | Dated event expansion, holidays/alternate weekdays, New York timezone, ICS |
 | `app` | Shared CLI/TUI orchestration, actual-member resolution, safe export |
@@ -22,7 +23,7 @@ CLI/TUI subject selection -> equivalent-time grouping -> pure exact optimizer
 | `tui::week` | Monday–Friday, 30-minute grid with component labels and weekend disclosure |
 | `main` | CLI options, local-file input, text/JSON output, application startup |
 
-Dependencies: `serde`/`serde_json` for data, `reqwest::blocking` for HTTPS, Ratatui/Crossterm for the terminal, `chrono`/`chrono-tz` for dates, `clap` for CLI parsing, `sha2` for content-derived IDs, and `tempfile` for safe file replacement/output. The calendar module emits RFC 5545 text, checked with the independent `icalendar` parser in tests. `Cargo.lock` pins the executable's dependency graph.
+Dependencies: `serde`/`serde_json` for data, `reqwest::blocking` for HTTPS, Ratatui/Crossterm for the terminal, `chrono`/`chrono-tz` for dates, `clap` for CLI parsing, `sha2` for content-derived IDs, `fs2` for crash-released session locks, and `tempfile` for safe file replacement/output. The calendar module emits RFC 5545 text, checked with the independent `icalendar` parser in tests. `Cargo.lock` pins the executable's dependency graph.
 
 ## Sources
 
@@ -76,6 +77,8 @@ Use owned records and stable IDs across UI state, persisted edits, solver result
 The optimizer is a pure in-memory function. It receives selected merged requirements, an optional cancellation flag, and, through `solve_with_calendar`, the loaded term calendar for dated PE conflicts. See [OPTIMIZER.MD](OPTIMIZER.MD). All input sources follow this path.
 
 The TUI owns selection IDs, search text, editor state, chosen result members, and notices. Selection survives filtering. Any selection/manual edit invalidates the old result. Search runs on an ordinary worker thread, communicating its result to the event loop. Escape can cancel, and cancellation never claims an optimum or infeasibility. There is no need for application-wide async. Initial HTTP loading happens before entering terminal raw mode.
+
+The executable uses `AppState::new_with_session` to restore selections and save each change before launching the optimizer or rendering the new state. `AppState::new` remains side-effect free for library callers. Only subject IDs and save timestamps are persisted in `sessions.json`, not solver results, member choices, or editor drafts. An advisory lock prevents cooperating TUIs from overwriting one another, and disk-byte checks detect external edits. Corrupt/newer-version files remain untouched and persistence errors stay visible independently of solver status. `--no-restore` disables both selection reads and writes. Restored unavailable IDs are retained on disk but excluded from optimization.
 
 Terminal setup has restoration guards for normal exit, errors, and panics. The interface provides catalog selection, manual entry management, score/timetable, unresolved notices, actual same-time member switching, explicit infeasibility, and local export.
 

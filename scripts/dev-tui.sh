@@ -41,7 +41,7 @@ cleanup() {
   fi
   stop_child
   restore_terminal
-  rm -f "$run_dir/app"
+  rm -f "$run_dir/app" "$run_dir/selection-ready"
   rmdir "$run_dir"
 }
 trap cleanup EXIT
@@ -75,7 +75,11 @@ while true; do
       # Never execute the build output directly: linking/copying a new build
       # must not overwrite the executable still displayed in the terminal.
       cp "$target/debug/hydrant-optimizer" "$run_dir/app"
-      "$run_dir/app" "$@" <&3 &
+      # Keep startup seeds until the child acknowledges a successful save.
+      # In particular, a rebuild may interrupt its first catalog download.
+      reload=0
+      if [[ -f "$run_dir/selection-ready" ]]; then reload=1; fi
+      HYDRANT_TUI_RELOAD="$reload" HYDRANT_TUI_READY_FILE="$run_dir/selection-ready" "$run_dir/app" "$@" <&3 &
       child=$!
     elif [[ $code != 0 ]]; then
       printf '\nBuild failed. Keeping the previous TUI. Save to retry.\n' >> "$build_log"

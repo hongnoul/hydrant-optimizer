@@ -493,7 +493,7 @@ fn manual_path(dir: &Path) -> PathBuf {
     dir.join(MANUAL_FILE)
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())

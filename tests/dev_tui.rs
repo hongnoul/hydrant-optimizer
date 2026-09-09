@@ -59,7 +59,13 @@ if [ -f hold-build ]; then
 fi
 if grep -q broken src/change.rs; then echo EXPECTED_BUILD_ERROR; exit 1; fi
 mkdir -p target/tui-dev/debug
-cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
+cat > target/tui-dev/debug/hydrant-optimizer <<'APP'
+#!/bin/sh
+echo start >> app-starts
+while [ -f hold-start ]; do sleep 0.05; done
+exec "$REAL_TUI" "$@"
+APP
+chmod +x target/tui-dev/debug/hydrant-optimizer
 "#,
     )
     .unwrap();
@@ -96,6 +102,8 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
         "--data-dir",
     ]);
     command.arg(path.join("data"));
+    // Explicit seeds apply only to the first launch, not each rebuild.
+    command.args(["tui", "--select", "B"]);
     command.cwd(path);
     command.env(
         "PATH",
@@ -107,6 +115,9 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
     );
     command.env("REAL_TUI", env!("CARGO_BIN_EXE_hydrant-optimizer"));
     command.env("TERM", "xterm-256color");
+    if !real {
+        fs::write(path.join("hold-start"), "").unwrap();
+    }
     let mut child = pair.slave.spawn_command(command).unwrap();
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().unwrap();
@@ -163,7 +174,67 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
             }
             output.clear();
         };
+        if !real {
+            let wait_starts = |count: usize| {
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while fs::read_to_string(path.join("app-starts"))
+                    .unwrap_or_default()
+                    .lines()
+                    .count()
+                    < count
+                {
+                    assert!(
+                        Instant::now() < deadline,
+                        "waiting for early app start {count}"
+                    );
+                    thread::sleep(Duration::from_millis(20));
+                }
+            };
+            wait_starts(1);
+            assert!(!path.join("data/sessions.json").exists());
+            fs::write(
+                &watched,
+                format!("{original}\n// rebuild before initial selection save\n"),
+            )
+            .unwrap();
+            wait_starts(2);
+            assert!(!path.join("data/sessions.json").exists());
+            fs::remove_file(path.join("hold-start")).unwrap();
+        }
         until("Subjects");
+        let initial: serde_json::Value =
+            serde_json::from_slice(&fs::read(path.join("data/sessions.json")).unwrap()).unwrap();
+        assert!(
+            initial["terms"]
+                .as_object()
+                .unwrap()
+                .values()
+                .any(|term| term["selected"] == serde_json::json!(["B"])),
+            "early reload dropped the startup seed before it was saved: {initial}"
+        );
+        writer.lock().unwrap().write_all(b"s /A\r ").unwrap();
+        let selection_deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let value = fs::read(path.join("data/sessions.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+            let selected_a = value
+                .as_ref()
+                .and_then(|v| v["terms"].as_object())
+                .is_some_and(|terms| {
+                    terms
+                        .values()
+                        .any(|term| term["selected"] == serde_json::json!(["A"]))
+                });
+            if selected_a {
+                break;
+            }
+            assert!(
+                Instant::now() < selection_deadline,
+                "selection edit was not autosaved: {value:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
         let edited = if real {
             assert!(original.contains("{}Subjects | {} found"));
             original.replace("{}Subjects | {} found", "{}ReloadVerified | {} found")
@@ -180,18 +251,28 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
             writer.lock().unwrap().write_all(b"?").unwrap();
             until("Press ? or Esc");
             writer.lock().unwrap().write_all(b"?").unwrap();
-            until("Partial term");
+            until("Enter sessions");
             keep_screen.set(false);
             fs::remove_file(path.join("hold-build")).unwrap();
         }
         until(if real { "ReloadVerified" } else { "Subjects" });
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(path.join("data/sessions.json")).unwrap()).unwrap();
+        assert!(
+            value["terms"]
+                .as_object()
+                .unwrap()
+                .values()
+                .any(|term| term["selected"] == serde_json::json!(["A"])),
+            "rebuild reapplied original B seed instead of restoring edited A: {value}"
+        );
         fs::write(&watched, "broken").unwrap();
         wait_log("Build failed.");
         keep_screen.set(true);
         writer.lock().unwrap().write_all(b"?").unwrap();
         until("Press ? or Esc");
         writer.lock().unwrap().write_all(b"?").unwrap();
-        until("Partial term");
+        until("Enter sessions");
         keep_screen.set(false);
         let log = fs::read_to_string(path.join("target/tui-dev/build.log")).unwrap();
         assert!(

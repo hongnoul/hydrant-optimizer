@@ -59,7 +59,7 @@ Cargo output is hidden by default and saved to `target/tui-dev/build.log` (repla
 
 Verify the watcher with `cargo test --locked --test dev_tui`. Add `-- --include-ignored --test-threads=1` to also exercise real Cargo rebuilds, a compiler error, and recovery in an isolated source copy.
 
-Reloads reset in-memory selections, search, scroll position, and unsaved editor input. Use `tui --select SUBJECT` (repeatable) to restore a preview selection. Saved manual entries remain in the normal data directory. Pass `--data-dir PATH` to isolate development data if desired.
+Selected classes now survive reloads and normal restarts automatically. `tui --select SUBJECT` (repeatable) replaces the saved selection on the watcher's first launch only. Later rebuilds resume your edits, including an empty selection. Search, scroll position, section-member preferences, and unsaved editor input still reset. Pass `--data-dir PATH` to isolate development data, or `--no-restore` for an ephemeral preview that neither loads nor saves selections.
 
 See [the TUI development guide](docs/tui-development.md) for the launcher, hidden build logs, and reload behavior.
 
@@ -107,6 +107,10 @@ Press `a` on the highlighted offering to add manual times. A timed published PE 
 - `$XDG_DATA_HOME/hydrant-optimizer` takes precedence when set.
 - `--data-dir PATH` overrides the location for all commands.
 - Downloaded cache and versioned `manual.json` are separate. Refreshing never rewrites manual sections.
+- Versioned `sessions.json` stores selected subject IDs separately for each term. Every add/remove is saved atomically before optimization, including clearing the last class. Startup restores the current term and recomputes the timetable from the current catalog and manual overlays. Calendar exports are not used as session state.
+- `tui --select SUBJECT` explicitly replaces the current term's saved selection. Unknown explicit subjects are rejected without changing it. `--no-restore` neither reads nor writes selection state and does not disable the catalog cache or manual-section persistence.
+- Unavailable saved subjects are disclosed and retained on disk, but omitted from optimization. A different term starts empty without erasing older terms. To replace retained unavailable IDs, start with explicit `tui --select` subjects.
+- Corrupt or newer-version session files are preserved. IO failures or a second TUI using the same data directory show a persistent **Selections NOT saved** warning. The UI remains usable without overwriting saved state. Close the other TUI and restart, or use a separate `--data-dir` / `--no-restore`. `sessions.lock` is an advisory lock file whose lock is released by the OS even after forced termination. Do not delete it while the app is running.
 - Manual entries are scoped by term, subject, component, and stable option ID. `manual list` works even without a cache. `manual disable ID` and `manual enable ID` control retained entries. `manual add --id ID ...` edits an existing entry, preserving its scope and enabled state. Components can be lecture, recitation, lab, design, pe, or another component published for that subject.
 - For reproducible inputs, `--catalog FILE --term FILE` reads local Hydrant `latest.json` and matching `latestTerm.json` snapshots through the same adapter. These do not overwrite the network cache.
 

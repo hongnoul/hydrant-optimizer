@@ -17,7 +17,13 @@ Cargo output is hidden by default and saved to `target/tui-dev/build.log` (repla
 
 Verify the watcher with `cargo test --locked --test dev_tui`. Add `-- --include-ignored --test-threads=1` to also exercise real Cargo rebuilds, a compiler error, and recovery in an isolated source copy.
 
-Reloads reset in-memory selections, search, scroll position, and unsaved editor input. Use `tui --select SUBJECT` (repeatable) to restore a preview selection. Saved manual entries remain in the normal data directory. Pass `--data-dir PATH` to isolate development data if desired.
+Class selections are atomically saved on every add/remove to term-scoped `sessions.json` in the normal data directory. Rebuilds, normal quits, and forced termination after a completed save no longer lose them. Restarting restores selections and recomputes the timetable. Calendar exports remain independent.
+
+`tui --select SUBJECT` (repeatable) replaces the saved selection on the first launch of the watcher. The launcher sets its internal `HYDRANT_TUI_RELOAD` flag to `0` until the TUI acknowledges its first successful save through `HYDRANT_TUI_READY_FILE`, then uses `1` on subsequent launches. This preserves startup seeds if a rebuild interrupts the initial catalog load, without reapplying them after user edits. Removing the last class remains empty after reload. `--no-restore` opts out of both loading and saving selections, and retains the old repeatable-preview seed behavior on each launch.
+
+Search, scroll position, section-member preferences, and unsaved editor input still reset. Saved manual entries remain in `manual.json`. Pass `--data-dir PATH` to isolate development data, especially when using fixture catalogs. A second TUI sharing the same data directory cannot overwrite the first one's selections and shows **Selections NOT saved** instead. Its UI remains usable. Close it and restart after the first exits, or use `--no-restore` / a different data directory.
+
+The JSON has a version, a `terms` map, and `selected` IDs / a `saved_at` timestamp for each term. Unknown or corrupt schema versions are not overwritten. Subjects missing from a refreshed catalog are retained with a warning, not passed to the optimizer. Non-TUI commands do not read or write session selections.
 
 ## Inspect hidden build logs
 

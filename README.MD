@@ -62,9 +62,17 @@ The manual editor's fields are Subject, Component, Section label, Meetings, Room
 
 The top search bar replaces the old status panel. Navigation letters remain ordinary text while searching or editing. Action feedback stays in the footer and the scrollable results details.
 
-Optimized schedules appear in a **full-width weekly table**, with **Monday–Sunday columns and 30-minute rows**, spanning the earliest through latest chosen meetings. Colored cells show subject numbers. Exact times, component names, section labels, and rooms are listed below. Off-grid meetings occupy each intersecting half-hour cell without changing their actual times. A `2×` (or higher) marker indicates multiple meetings sharing a half-hour cell, not necessarily a scheduling conflict.
+Optimized schedules appear in a **full-width weekly table**, with **Monday–Friday columns and 30-minute rows**, spanning the earliest through latest chosen weekday meetings. Colored cells show subject numbers and components: **Lec**, **Rec**, **Lab**, **PE**, or another component label. Narrow cells shorten the subject number before the component. Exact times, full component names, section labels, and rooms are listed below. Off-grid meetings occupy each intersecting half-hour cell without changing their actual times. A `2×` (or higher) marker indicates multiple meetings sharing a half-hour cell, not necessarily a scheduling conflict. Crowded cells retain a component summary rather than suggesting incorrect subject/component pairings. Weekend meetings are explicitly disclosed outside the grid and remain in optimization, exact details, and export.
 
 Results are scrollable at **80×24**, including all unresolved-time, source/cache, and export notices. The results heading shows the notice count, and the bottom border shows the scroll position. Long action messages and output paths remain available in the scrollable view.
+
+### PE classes
+
+Search `PE.` or an activity name to find Hydrant's PE offerings, then select them like academic subjects. Each quarter has a stable selectable ID: `PE.<number>.Q1` through `Q4`, or `Q5` for IAP. Titles and section labels show the activity, quarter, and published dates. This lets you select the same activity in separate quarters without confusing their sections.
+
+PE requires known meeting times and complete start/end dates. Disjoint quarters can share a weekly time slot without a false conflict. Export includes only occurrences inside both the offering's date range and the loaded term, respecting its holidays and alternate weekdays. The score and grid use the **combined weekly pattern across selected quarters**, not a separate cost per actual week. Unknown times, missing dates, and offerings outside the loaded term are disclosed, not invented or silently extended to a semester.
+
+Press `a` on the highlighted offering to add manual times. A timed published PE option prefills the `pe` component and its date bounds. Manual PE sections require complete bounds too. The application does not register you for PE or check availability, prerequisites, or credit completion.
 
 ### Local files
 
@@ -73,7 +81,7 @@ Results are scrollable at **80×24**, including all unresolved-time, source/cach
 - `$XDG_DATA_HOME/hydrant-optimizer` takes precedence when set.
 - `--data-dir PATH` overrides the location for all commands.
 - Downloaded cache and versioned `manual.json` are separate. Refreshing never rewrites manual sections.
-- Manual entries are scoped by term, subject, component, and stable option ID. `manual list` works even without a cache. `manual disable ID` and `manual enable ID` control retained entries. `manual add --id ID ...` edits an existing entry, preserving its scope and enabled state. Components can be lecture, recitation, lab, design, or another component published for that subject.
+- Manual entries are scoped by term, subject, component, and stable option ID. `manual list` works even without a cache. `manual disable ID` and `manual enable ID` control retained entries. `manual add --id ID ...` edits an existing entry, preserving its scope and enabled state. Components can be lecture, recitation, lab, design, pe, or another component published for that subject.
 - For reproducible inputs, `--catalog FILE --term FILE` reads local Hydrant `latest.json` and matching `latestTerm.json` snapshots through the same adapter. These do not overwrite the network cache.
 
 ## Scheduling contract
@@ -90,9 +98,9 @@ Results are scrollable at **80×24**, including all unresolved-time, source/cach
 
 **Assume Hydrant's data is accurate.** Fetch its public JSON. No independent scraping, cross-source verification, separate validation service, Kerberos, or login. Schema and user-input validation are local application responsibilities, not a second source of schedule truth.
 
-TBA means missing information. Conflict checks and optimality cover only known, supported options. The MVP models full-term weekly meetings. Date-limited options are preserved and explicitly omitted from optimization rather than silently treated as full-term. Manual date bounds can be recorded with `--start-date` / `--end-date`, but partial-term optimization is not supported.
+TBA means missing information. Conflict checks and optimality cover only known, supported options. Scheduling supports full-term academic meetings and fully dated PE offerings. Other date-limited academic options are preserved and explicitly omitted rather than silently treated as full-term. Manual date bounds can be recorded with `--start-date` / `--end-date`. General partial-term academic optimization remains unsupported.
 
-No registration, seats, degree planning, PE planning, travel objective, or cloud sync. The application does not import events into a calendar account or send anything beyond requests for public catalog data.
+No registration, seats, degree planning, PE credit tracking, travel objective, or cloud sync. The application does not import events into a calendar account or send anything beyond requests for public catalog data.
 
 ## Verification
 

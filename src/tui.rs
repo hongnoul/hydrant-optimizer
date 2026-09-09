@@ -609,14 +609,38 @@ impl AppState {
 
     pub fn open_add_manual(&mut self) {
         let course = self
-            .selected
-            .iter()
-            .next()
-            .cloned()
+            .current_subject()
+            .filter(|_| self.focus == Focus::Subjects)
+            .map(str::to_owned)
+            .or_else(|| self.selected.iter().next().cloned())
             .or_else(|| self.current_subject().map(str::to_owned))
             .or_else(|| self.base.courses.keys().next().cloned())
             .unwrap_or_default();
-        self.editor = Some(ManualForm::new(course.clone()));
+        let mut form = ManualForm::new(course.clone());
+        if let Some(requirement) = self.base.courses.get(&course).and_then(|course| {
+            course
+                .requirements
+                .iter()
+                .find(|requirement| requirement.kind == "pe")
+        }) {
+            form.kind = "pe".to_string();
+            if let Some(meeting) = requirement
+                .options
+                .iter()
+                .flat_map(|option| &option.meetings)
+                .next()
+            {
+                form.start_date = meeting
+                    .start_date
+                    .map(|date| date.to_string())
+                    .unwrap_or_default();
+                form.end_date = meeting
+                    .end_date
+                    .map(|date| date.to_string())
+                    .unwrap_or_default();
+            }
+        }
+        self.editor = Some(form);
         self.status = format!("Manual editor opened for {course}.");
     }
 
@@ -1058,7 +1082,7 @@ fn draw(frame: &mut Frame<'_>, app: &mut AppState) {
 
     draw_search(frame, app, root[0]);
 
-    // A full-width calendar keeps all seven days readable at 80 columns.
+    // A full-width weekday calendar keeps course and component labels readable.
     // Catalog and manual entries remain visible above it rather than squeezing
     // the week into the old, narrow right-hand pane.
     let body = Layout::default()
@@ -1162,7 +1186,7 @@ fn draw_subjects(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{checked} "), style),
                 Span::styled(
-                    format!("{:<10}", id),
+                    format!("{id:<10} "),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(course.title.clone()),
@@ -1583,8 +1607,12 @@ fn timetable_lines(app: &AppState) -> Result<Vec<String>> {
                 meeting.weekday,
                 meeting.start_minute,
                 format!(
-                    "{}  {} {}  {}  {}",
+                    "{}{}  {} {}  {}  {}",
                     meeting.display(),
+                    match (meeting.start_date, meeting.end_date) {
+                        (Some(start), Some(end)) => format!(" [{start} to {end}]"),
+                        _ => String::new(),
+                    },
                     section.course_id,
                     section.kind,
                     section.section.label,
@@ -1843,7 +1871,7 @@ mod viewport_tests {
         assert!(header.contains("Search by course number or title"));
         assert!(!header.contains("Status"));
         assert!(screen.contains("> Subjects"));
-        for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+        for day in ["Mon", "Tue", "Wed", "Thu", "Fri"] {
             assert!(screen.contains(day), "missing {day}: {screen}");
         }
         assert!(screen.contains("09:00"));

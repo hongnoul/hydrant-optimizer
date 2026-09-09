@@ -7,10 +7,13 @@ use ratatui::{
 
 use crate::model::ChosenSection;
 
-const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAYS: [&str; 5] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 const SLOT_MINUTES: u16 = 30;
-const DAY_COUNT: usize = 7;
+const DAY_COUNT: usize = 5;
+const WEEKEND_START: u8 = DAY_COUNT as u8;
+const WEEK_DAYS: u8 = 7;
 const TIME_WIDTH: usize = 5;
+const MIN_DAY_WIDTH: usize = 5;
 const SEPARATOR_COUNT: usize = DAY_COUNT + 2;
 const PALETTE: [Color; 8] = [
     Color::Blue,
@@ -42,6 +45,13 @@ struct Entry {
     color: Color,
 }
 
+#[derive(Clone, Debug, Default)]
+struct EntrySet {
+    weekdays: Vec<Entry>,
+    weekend_count: usize,
+    shortened_other_kinds: bool,
+}
+
 pub(super) fn week_lines(
     sections: &[ChosenSection],
     width: u16,
@@ -58,17 +68,36 @@ pub(super) fn week_lines(
         width,
     ));
 
-    let entries = entries_from_sections(sections, selected_requirement);
-    if entries.is_empty() {
+    let entry_set = entries_from_sections(sections, selected_requirement);
+    if entry_set.weekdays.is_empty() {
+        if entry_set.weekend_count > 0 {
+            lines.push(plain_line(
+                "Weekday view: no Monday-Friday meetings to show.",
+                width,
+            ));
+            lines.push(plain_line(
+                &weekend_disclosure(entry_set.weekend_count),
+                width,
+            ));
+            lines.push(component_legend_line(width));
+            return lines;
+        }
         lines.push(plain_line("No weekly meetings to show.", width));
         return lines;
     }
+    let entries = entry_set.weekdays;
 
     let Some(plan) = ColumnPlan::new(width) else {
         lines.push(plain_line(
-            "Width too small for the seven-day table. Exact meeting times appear in details below.",
+            "Width too small for the weekday table. Exact meeting times appear in details below.",
             width,
         ));
+        if entry_set.weekend_count > 0 {
+            lines.push(plain_line(
+                &weekend_disclosure(entry_set.weekend_count),
+                width,
+            ));
+        }
         return lines;
     };
 
@@ -93,13 +122,23 @@ pub(super) fn week_lines(
 
     let mut notes = Vec::new();
     if saw_multiple {
-        notes.push("2× means multiple meetings share that half-hour bucket");
+        notes.push("2× = multiple meetings in bucket; exact pairs below");
     }
     if entries.iter().any(|entry| entry.selected) {
         notes.push("selected requirement is highlighted");
     }
+    if entry_set.shortened_other_kinds {
+        notes.push("other component kinds use first 3 chars");
+    }
     if !notes.is_empty() {
         lines.push(plain_line(&format!("Legend: {}.", notes.join("; ")), width));
+    }
+    lines.push(component_legend_line(width));
+    if entry_set.weekend_count > 0 {
+        lines.push(plain_line(
+            &weekend_disclosure(entry_set.weekend_count),
+            width,
+        ));
     }
 
     lines
@@ -107,13 +146,13 @@ pub(super) fn week_lines(
 
 impl ColumnPlan {
     fn new(width: usize) -> Option<Self> {
-        if width < TIME_WIDTH + SEPARATOR_COUNT + DAY_COUNT * 3 {
+        if width < TIME_WIDTH + SEPARATOR_COUNT + DAY_COUNT * MIN_DAY_WIDTH {
             return None;
         }
         let table_width = width;
         let available = table_width - TIME_WIDTH - SEPARATOR_COUNT;
         let base = available / DAY_COUNT;
-        if base < 3 {
+        if base < MIN_DAY_WIDTH {
             return None;
         }
         let mut day_widths = [base; DAY_COUNT];
@@ -131,36 +170,42 @@ impl ColumnPlan {
 fn entries_from_sections(
     sections: &[ChosenSection],
     selected_requirement: Option<&str>,
-) -> Vec<Entry> {
+) -> EntrySet {
     let selected_requirement = selected_requirement
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let mut entries = Vec::new();
+    let mut entry_set = EntrySet::default();
     for section in sections {
         let color = course_color(&section.course_id);
         let selected = selected_requirement
             .map(|requirement| section_matches_requirement(section, requirement))
             .unwrap_or(false);
         for meeting in &section.section.meetings {
-            if meeting.weekday >= DAY_COUNT as u8
+            if meeting.weekday >= WEEK_DAYS
                 || meeting.start_minute >= meeting.end_minute
                 || meeting.end_minute > 24 * 60
             {
                 continue;
             }
-            entries.push(Entry {
+            let (kind, shortened) = component_label(&section.kind);
+            entry_set.shortened_other_kinds |= shortened;
+            if meeting.weekday >= WEEKEND_START {
+                entry_set.weekend_count += 1;
+                continue;
+            }
+            entry_set.weekdays.push(Entry {
                 day: meeting.weekday as usize,
                 start: meeting.start_minute,
                 end: meeting.end_minute,
                 course_id: section.course_id.clone(),
-                kind: section.kind.clone(),
+                kind,
                 section_id: section.section.id.clone(),
                 selected,
                 color,
             });
         }
     }
-    entries.sort_by(|left, right| {
+    entry_set.weekdays.sort_by(|left, right| {
         (
             left.day,
             left.start,
@@ -178,7 +223,7 @@ fn entries_from_sections(
                 &right.section_id,
             ))
     });
-    entries
+    entry_set
 }
 
 fn section_matches_requirement(section: &ChosenSection, requirement: &str) -> bool {
@@ -255,22 +300,119 @@ fn border_line(plan: &ColumnPlan, left: char, middle: char, right: char) -> Line
 
 fn occupant_text(occupants: &[&Entry], width: usize) -> String {
     if occupants.len() == 1 {
-        return fit_text(&occupants[0].course_id, width);
+        return fit_component_text("", &occupants[0].course_id, &occupants[0].kind, width);
     }
 
-    let mut labels = occupants
+    let courses = occupants
         .iter()
         .map(|entry| entry.course_id.as_str())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    labels.sort_unstable();
+    let kinds = occupants
+        .iter()
+        .map(|entry| entry.kind.as_str())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     let prefix = format!("{}×", occupants.len());
     if width <= prefix.chars().count() {
         return fit_text(&occupants.len().to_string(), width);
     }
-    let joined = labels.join(",");
-    fit_text(&format!("{prefix}{joined}"), width)
+    let kind_text = kinds.join("/");
+    if courses.len() == 1 {
+        return fit_component_text(&prefix, courses[0], &kind_text, width);
+    }
+
+    let paired_text = occupants
+        .iter()
+        .map(|entry| format!("{} {}", entry.course_id, entry.kind))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join("/");
+    let paired = format!("{prefix}{paired_text}");
+    if Span::raw(paired.as_str()).width() <= width {
+        paired
+    } else {
+        fit_text(&format!("{prefix}{kind_text}"), width)
+    }
+}
+
+fn component_label(kind: &str) -> (String, bool) {
+    let trimmed = kind.trim();
+    let normalized = trimmed.to_ascii_lowercase();
+    let collapsed = normalized
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>();
+    match collapsed.as_str() {
+        "lecture" | "lec" => ("Lec".to_string(), false),
+        "recitation" | "rec" => ("Rec".to_string(), false),
+        "lab" | "laboratory" => ("Lab".to_string(), false),
+        "pe" | "physicaleducation" => ("PE".to_string(), false),
+        "design" => ("Design".to_string(), false),
+        "" => ("Other".to_string(), false),
+        _ => {
+            let mut chars = trimmed.chars().filter(|ch| !ch.is_whitespace());
+            let label = chars.by_ref().take(3).collect::<String>();
+            if label.is_empty() {
+                ("Other".to_string(), false)
+            } else {
+                (titlecase_ascii(&label), true)
+            }
+        }
+    }
+}
+
+fn titlecase_ascii(value: &str) -> String {
+    let mut output = String::new();
+    let mut chars = value.chars();
+    if let Some(first) = chars.next() {
+        output.extend(first.to_uppercase());
+    }
+    for ch in chars {
+        output.extend(ch.to_lowercase());
+    }
+    output
+}
+
+fn fit_component_text(prefix: &str, subject: &str, component: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let suffix = if component.is_empty() {
+        String::new()
+    } else {
+        format!(" {component}")
+    };
+    let fixed = format!("{prefix}{suffix}");
+    if Span::raw(fixed.as_str()).width() >= width {
+        if prefix.is_empty() {
+            return fit_text(component, width);
+        }
+        let prefix_width = Span::raw(prefix).width();
+        if prefix_width >= width {
+            return fit_text(prefix, width);
+        }
+        return format!("{prefix}{}", fit_text(component, width - prefix_width));
+    }
+
+    let subject_width = width - Span::raw(fixed.as_str()).width();
+    let fitted_subject = fit_text(subject, subject_width);
+    format!("{prefix}{fitted_subject}{suffix}")
+}
+
+fn component_legend_line(width: usize) -> Line<'static> {
+    plain_line(
+        "Lec=lecture · Rec=recitation · Lab=lab · PE=physical ed · Design=design",
+        width,
+    )
+}
+
+fn weekend_disclosure(count: usize) -> String {
+    let meeting = if count == 1 { "meeting" } else { "meetings" };
+    format!("{count} weekend {meeting} hidden here. See exact times below; export keeps them.")
 }
 
 fn occupant_style(occupants: &[&Entry]) -> Style {
@@ -405,12 +547,20 @@ mod tests {
             .unwrap_or_else(|| panic!("missing row {time}"))
     }
 
+    fn row_index(lines: &[Line<'_>], time: &str) -> usize {
+        lines
+            .iter()
+            .map(text)
+            .position(|line| line.starts_with(&format!("│{time}")))
+            .unwrap_or_else(|| panic!("missing row {time}"))
+    }
+
     fn cell_text(row: &str, index: usize) -> &str {
         row.split('│').nth(index + 2).unwrap()
     }
 
     #[test]
-    fn header_includes_all_day_columns() {
+    fn header_includes_weekday_columns_only() {
         let lines = week_lines(
             &[section(
                 "6.1200",
@@ -426,6 +576,15 @@ mod tests {
         for day in DAYS {
             assert!(rendered.contains(day), "missing {day}");
         }
+        assert!(!rendered.contains("Sat"));
+        assert!(!rendered.contains("Sun"));
+        let header = text(
+            lines
+                .iter()
+                .find(|line| text(line).starts_with("│Time"))
+                .unwrap(),
+        );
+        assert_eq!(header.matches('│').count(), DAY_COUNT + 2);
         for line in &lines {
             assert!(line.width() <= 78);
         }
@@ -448,6 +607,9 @@ mod tests {
         assert!(all_text(&lines).contains("09:30"));
         assert!(all_text(&lines).contains("10:00"));
         assert!(all_text(&lines).contains("10:30"));
+        assert_eq!(row_index(&lines, "09:30"), row_index(&lines, "09:00") + 1);
+        assert_eq!(row_index(&lines, "10:00"), row_index(&lines, "09:30") + 1);
+        assert_eq!(row_index(&lines, "10:30"), row_index(&lines, "10:00") + 1);
         assert!(!all_text(&lines).contains("09:15-10:46"));
     }
 
@@ -486,19 +648,6 @@ mod tests {
         assert!(!cell_text(&row_0900, 0).contains('×'));
         assert!(cell_text(&row_0930, 0).contains("18.06"));
         assert!(!cell_text(&row_0930, 0).contains('×'));
-
-        let sunday = week_lines(
-            &[section(
-                "21W.755",
-                "seminar",
-                "S1",
-                vec![meeting(6, 1410, 1440)],
-            )],
-            78,
-            None,
-        );
-        let row_2330 = row_text(&sunday, "23:30");
-        assert!(cell_text(&row_2330, 6).contains("21W.755"));
     }
 
     #[test]
@@ -526,7 +675,169 @@ mod tests {
         );
         let row = row_text(&lines, "09:00");
         assert!(cell_text(&row, 0).contains("2×"));
-        assert!(all_text(&lines).contains("2× means"));
+        assert!(all_text(&lines).contains("2× = multiple meetings in bucket; exact pairs below"));
+    }
+
+    #[test]
+    fn short_component_legend_is_complete_at_seventy_eight_columns() {
+        let lines = week_lines(
+            &[section("2.00B", "design", "D1", vec![meeting(4, 540, 570)])],
+            78,
+            None,
+        );
+        assert!(
+            all_text(&lines).contains(
+                "Lec=lecture · Rec=recitation · Lab=lab · PE=physical ed · Design=design"
+            )
+        );
+        assert!(lines.iter().all(|line| line.width() <= 78));
+    }
+
+    #[test]
+    fn component_labels_cover_known_design_and_other_kinds() {
+        let lines = week_lines(
+            &[
+                section("6.1200", "lecture", "L1", vec![meeting(0, 540, 570)]),
+                section("18.01", "recitation", "R1", vec![meeting(1, 540, 570)]),
+                section("7.01", "lab", "B1", vec![meeting(2, 540, 570)]),
+                section(
+                    "PE.XXXX",
+                    "physical education",
+                    "P1",
+                    vec![meeting(3, 540, 570)],
+                ),
+                section("2.00B", "design", "D1", vec![meeting(4, 540, 570)]),
+                section("21W.755", "seminar", "S1", vec![meeting(0, 570, 600)]),
+            ],
+            78,
+            None,
+        );
+
+        let row_0900 = row_text(&lines, "09:00");
+        assert!(cell_text(&row_0900, 0).contains("6.1200 Lec"));
+        assert!(cell_text(&row_0900, 1).contains("18.01 Rec"));
+        assert!(cell_text(&row_0900, 2).contains("7.01 Lab"));
+        assert!(cell_text(&row_0900, 3).contains("PE.XXXX PE"));
+        assert!(cell_text(&row_0900, 4).contains("2.00B Design"));
+
+        let row_0930 = row_text(&lines, "09:30");
+        assert!(cell_text(&row_0930, 0).contains("21W.755 Sem"));
+        assert!(all_text(&lines).contains("other component kinds use first 3 chars"));
+    }
+
+    #[test]
+    fn clipping_truncates_subject_before_component_at_inner_78() {
+        let lines = week_lines(
+            &[section(
+                "LONG-SUBJECT-6.1200",
+                "lecture",
+                "L1",
+                vec![meeting(0, 540, 570)],
+            )],
+            78,
+            None,
+        );
+        let cell = cell_text(&row_text(&lines, "09:00"), 0).trim().to_string();
+        assert!(
+            cell.ends_with(" Lec"),
+            "component was clipped from {cell:?}"
+        );
+        assert!(cell.starts_with("LONG-SUB"));
+        assert!(!cell.contains("6.1200"));
+    }
+
+    #[test]
+    fn shared_bucket_with_same_course_different_components_shows_multiplicity() {
+        let lines = week_lines(
+            &[
+                section("6.1200", "lecture", "L1", vec![meeting(0, 540, 570)]),
+                section("6.1200", "recitation", "R1", vec![meeting(0, 540, 570)]),
+            ],
+            78,
+            None,
+        );
+        let row = row_text(&lines, "09:00");
+        let cell = cell_text(&row, 0);
+        assert!(cell.contains("2×"));
+        assert!(cell.contains("Lec/Rec"));
+        assert!(cell.contains("6.1"));
+    }
+
+    #[test]
+    fn shared_bucket_keeps_different_course_component_pairs_when_they_fit() {
+        let lines = week_lines(
+            &[
+                section("W", "lecture", "L1", vec![meeting(0, 540, 570)]),
+                section("X", "lab", "B1", vec![meeting(0, 540, 570)]),
+            ],
+            78,
+            None,
+        );
+        let row = row_text(&lines, "09:00");
+        let cell = cell_text(&row, 0).trim();
+        assert_eq!(cell, "2×W Lec/X Lab");
+    }
+
+    #[test]
+    fn shared_bucket_summarizes_components_instead_of_mismatching_long_pairs() {
+        let lines = week_lines(
+            &[
+                section("6.1200", "lecture", "L1", vec![meeting(0, 540, 570)]),
+                section("18.01", "lab", "B1", vec![meeting(0, 540, 570)]),
+            ],
+            78,
+            None,
+        );
+        let row = row_text(&lines, "09:00");
+        let cell = cell_text(&row, 0);
+        assert!(cell.contains("2×Lab/Lec"));
+        assert!(!cell.contains("6.1200"));
+        assert!(!cell.contains("18.01"));
+        assert!(all_text(&lines).contains("exact pairs below"));
+    }
+
+    #[test]
+    fn weekend_meetings_are_disclosed_but_do_not_set_weekday_bounds() {
+        let lines = week_lines(
+            &[
+                section("6.1200", "lecture", "L1", vec![meeting(0, 540, 570)]),
+                section("21W.755", "seminar", "S1", vec![meeting(6, 1410, 1440)]),
+            ],
+            78,
+            None,
+        );
+        let rendered = all_text(&lines);
+        assert!(
+            rendered.contains(
+                "1 weekend meeting hidden here. See exact times below; export keeps them."
+            )
+        );
+        assert!(rendered.contains("09:00"));
+        assert!(!rendered.contains("23:30"));
+        assert!(!rendered.contains("Sat"));
+        assert!(!rendered.contains("Sun"));
+    }
+
+    #[test]
+    fn only_weekend_input_shows_disclosure_without_time_rows() {
+        let lines = week_lines(
+            &[
+                section("21W.755", "seminar", "S1", vec![meeting(5, 600, 660)]),
+                section("CMS.100", "lecture", "L1", vec![meeting(6, 1410, 1440)]),
+            ],
+            78,
+            None,
+        );
+        let rendered = all_text(&lines);
+        assert!(rendered.contains("no Monday-Friday meetings"));
+        assert!(
+            rendered.contains(
+                "2 weekend meetings hidden here. See exact times below; export keeps them."
+            )
+        );
+        assert!(!rendered.contains("│10:00"));
+        assert!(!rendered.contains("│23:30"));
+        assert!(!rendered.contains("┌"));
     }
 
     #[test]
@@ -548,7 +859,7 @@ mod tests {
     }
 
     #[test]
-    fn width_below_thirty_five_shows_resize_hint_not_ambiguous_days() {
+    fn width_below_thirty_seven_shows_resize_hint_not_ambiguous_days() {
         let lines = week_lines(
             &[section(
                 "6.1200",
@@ -556,12 +867,12 @@ mod tests {
                 "L1",
                 vec![meeting(0, 540, 570)],
             )],
-            34,
+            36,
             None,
         );
         let rendered = all_text(&lines);
         assert!(rendered.contains("Width too small"));
-        assert!(lines.iter().all(|line| line.width() <= 34));
+        assert!(lines.iter().all(|line| line.width() <= 36));
 
         let lines = week_lines(
             &[section(
@@ -570,20 +881,30 @@ mod tests {
                 "L1",
                 vec![meeting(0, 540, 570)],
             )],
-            35,
+            37,
             None,
         );
         let rendered = all_text(&lines);
         for day in DAYS {
             assert!(rendered.contains(day), "missing {day}");
         }
-        assert!(lines.iter().all(|line| line.width() <= 35));
+        assert!(lines.iter().all(|line| line.width() <= 37));
     }
 
     #[test]
-    fn unicode_and_tiny_width_are_safe_and_bounded() {
+    fn selected_style_and_unicode_width_are_preserved() {
         let mut item = section("界6.1200", "lecture", "L1", vec![meeting(0, 540, 570)]);
         item.section.label = "界 label".to_string();
+        let lines = week_lines(&[item.clone()], 78, Some("界6.1200/lecture"));
+        let highlighted = lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .find(|span| span.content.contains("Lec"))
+            .unwrap();
+        assert_eq!(highlighted.style.bg, Some(Color::Yellow));
+        assert!(highlighted.style.add_modifier.contains(Modifier::BOLD));
+        assert!(highlighted.content.contains("界6.1200 Lec"));
+
         for width in [1, 10, 20, 26] {
             let lines = week_lines(&[item.clone()], width, None);
             assert!(!lines.is_empty());

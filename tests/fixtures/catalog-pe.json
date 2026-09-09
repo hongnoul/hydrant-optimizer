@@ -1,0 +1,31 @@
+{
+  "lastUpdated": "2026-09-09 00:00",
+  "termInfo": {
+    "urlName": "f26", "startDate": "2026-10-26", "endDate": "2026-11-09",
+    "h1EndDate": "2026-10-30", "h2StartDate": "2026-11-02",
+    "holidayDates": ["2026-11-02"], "mondayScheduleDate": "2026-11-03"
+  },
+  "classes": {
+    "A": {"number":"A", "name":"Academic components", "sectionKinds":["lecture","recitation","lab"],
+      "lectureSections":[[[[6,2]],"Lecture room"]],
+      "recitationSections":[[[[40,2]],"Recitation room"]],
+      "labSections":[[[[74,2]],"Lab room"]]}
+  },
+  "pe": {
+    "1": {
+      "PE.1000": {"number":"PE.1000", "name":"Swimming", "quarter":1,
+        "sectionNumbers":["1","2"], "rawSections":["Gym/M/0/9","Gym/M/0/11"],
+        "sections":[[[[6,2]],"Gym early"],[[[10,2]],"Gym late"]],
+        "startDate":"2026-10-26", "endDate":"2026-10-30"},
+      "PE.2000": {"number":"PE.2000", "name":"Unannounced trip", "quarter":1,
+        "sectionNumbers":["1"], "rawSections":["Off Campus/U/0/3"],
+        "sections":[[[],"Off Campus"]], "startDate":"2026-10-30", "endDate":"2026-11-01"}
+    },
+    "2": {
+      "PE.1000": {"number":"PE.1000", "name":"Swimming", "quarter":2,
+        "sectionNumbers":["1"], "rawSections":["Gym/M/0/11"],
+        "sections":[[[[10,2]],"Gym second quarter"]],
+        "startDate":"2026-11-03", "endDate":"2026-11-09"}
+    }
+  }
+}

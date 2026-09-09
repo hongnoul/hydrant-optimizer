@@ -6,7 +6,12 @@ use std::{
 
 use anyhow::{Result, ensure};
 
-use crate::model::{Meeting, Requirement, Score, SectionOption, Solution, SolveStatus, TimeChoice};
+use crate::model::{
+    Meeting, Requirement, Score, SectionOption, Solution, SolveStatus, TermCalendar, TimeChoice,
+    bounded_pe_meetings, calendar_meetings_overlap, is_pe_kind, meetings_have_date_limits,
+    meetings_have_internal_calendar_overlap, meetings_have_internal_natural_overlap,
+    natural_meetings_overlap,
+};
 
 const DAYS_PER_WEEK: usize = 7;
 const MINUTES_PER_DAY: usize = 24 * 60;
@@ -73,6 +78,7 @@ struct Candidate {
 #[derive(Clone, Debug)]
 struct SearchGroup {
     requirement_id: String,
+    kind: String,
     candidates: Vec<Candidate>,
 }
 
@@ -86,6 +92,7 @@ struct PreparedOption {
 #[derive(Clone, Debug)]
 struct PreparedRequirement {
     id: String,
+    kind: String,
     options: Vec<PreparedOption>,
 }
 
@@ -98,10 +105,14 @@ pub fn group(requirement: &Requirement) -> Result<Vec<TimeChoice>> {
     let mut buckets: BTreeMap<(Vec<Meeting>, Vec<String>), Vec<SectionOption>> = BTreeMap::new();
     for option in &requirement.options {
         let meetings = canonical_meetings(&option.meetings)?;
-        if meetings.is_empty() || option.unsupported_reason.is_some() || has_date_limit(&meetings) {
+        if !option_is_searchable(
+            &requirement.kind,
+            &meetings,
+            option.unsupported_reason.is_some(),
+        ) {
             continue;
         }
-        ensure_no_weekly_overlap(&meetings)?;
+        ensure_no_internal_overlap(&meetings, None)?;
         let outbound = option.incompatible_with.iter().cloned().collect::<Vec<_>>();
         buckets
             .entry((meetings, outbound))
@@ -115,11 +126,32 @@ pub fn group(requirement: &Requirement) -> Result<Vec<TimeChoice>> {
 }
 
 pub fn solve(requirements: &[Requirement], cancel: Option<&AtomicBool>) -> Result<Solution> {
+    solve_impl(requirements, None, cancel)
+}
+
+pub fn solve_with_calendar(
+    requirements: &[Requirement],
+    calendar: &TermCalendar,
+    cancel: Option<&AtomicBool>,
+) -> Result<Solution> {
+    ensure!(calendar.start <= calendar.end, "calendar start follows end");
+    ensure!(
+        calendar.alternate_days.values().all(|weekday| *weekday < 7),
+        "alternate calendar weekdays must be Monday through Sunday"
+    );
+    solve_impl(requirements, Some(calendar), cancel)
+}
+
+fn solve_impl(
+    requirements: &[Requirement],
+    calendar: Option<&TermCalendar>,
+    cancel: Option<&AtomicBool>,
+) -> Result<Solution> {
     if is_cancelled(cancel) {
         return Ok(cancelled_solution(Vec::new()));
     }
 
-    let (mut groups, unresolved) = prepare(requirements)?;
+    let (mut groups, mut unresolved) = prepare(requirements, calendar)?;
     if is_cancelled(cancel) {
         return Ok(cancelled_solution(unresolved));
     }
@@ -143,13 +175,22 @@ pub fn solve(requirements: &[Requirement], cancel: Option<&AtomicBool>) -> Resul
         });
     }
 
+    let date_sensitive_conflicts = groups.iter().any(|group| {
+        group
+            .candidates
+            .iter()
+            .any(|candidate| meetings_have_date_limits(&candidate.choice.meetings))
+    });
+
     let mut search = SearchState {
         groups: &groups,
+        calendar,
         cancel,
         best_score: None,
         best_choices: Vec::new(),
         selected: Vec::new(),
         occupancy: WeekBits::empty(),
+        date_sensitive_conflicts,
     };
     let cancelled = search.run(0);
 
@@ -172,6 +213,19 @@ pub fn solve(requirements: &[Requirement], cancel: Option<&AtomicBool>) -> Resul
             .cmp(&b.requirement_id)
             .then_with(|| a.id.cmp(&b.id))
     });
+    if choices.iter().any(|choice| {
+        groups
+            .iter()
+            .find(|group| group.requirement_id == choice.requirement_id)
+            .is_some_and(|group| bounded_pe_meetings(&group.kind, &choice.meetings))
+    }) {
+        unresolved.push(
+            "selected bounded PE meetings use a combined weekly template for score, and date bounds constrain conflicts and calendar export"
+                .to_string(),
+        );
+        unresolved.sort();
+        unresolved.dedup();
+    }
     Ok(Solution {
         status: SolveStatus::OptimalKnown,
         choices,
@@ -182,11 +236,13 @@ pub fn solve(requirements: &[Requirement], cancel: Option<&AtomicBool>) -> Resul
 
 struct SearchState<'a> {
     groups: &'a [SearchGroup],
+    calendar: Option<&'a TermCalendar>,
     cancel: Option<&'a AtomicBool>,
     best_score: Option<Score>,
     best_choices: Vec<TimeChoice>,
     selected: Vec<Candidate>,
     occupancy: WeekBits,
+    date_sensitive_conflicts: bool,
 }
 
 impl SearchState<'_> {
@@ -214,7 +270,15 @@ impl SearchState<'_> {
             if is_cancelled(self.cancel) {
                 return true;
             }
-            if self.occupancy.intersects(&candidate.bits) {
+            if !self.date_sensitive_conflicts && self.occupancy.intersects(&candidate.bits) {
+                continue;
+            }
+            if self.date_sensitive_conflicts
+                && self
+                    .selected
+                    .iter()
+                    .any(|selected| candidates_conflict(selected, candidate, self.calendar))
+            {
                 continue;
             }
             if self
@@ -239,7 +303,10 @@ impl SearchState<'_> {
     }
 }
 
-fn prepare(requirements: &[Requirement]) -> Result<(Vec<SearchGroup>, Vec<String>)> {
+fn prepare(
+    requirements: &[Requirement],
+    calendar: Option<&TermCalendar>,
+) -> Result<(Vec<SearchGroup>, Vec<String>)> {
     let mut seen_requirements = BTreeSet::new();
     let mut option_to_requirement = BTreeMap::new();
     let mut prepared = Vec::new();
@@ -287,18 +354,32 @@ fn prepare(requirements: &[Requirement]) -> Result<(Vec<SearchGroup>, Vec<String
                     requirement.id, option.id, reason
                 ));
             }
-            if has_date_limit(&meetings) {
+            let date_limited = meetings_have_date_limits(&meetings);
+            let bounded_pe = bounded_pe_meetings(&requirement.kind, &meetings);
+            if date_limited && !bounded_pe && !is_pe_kind(&requirement.kind) {
                 notices.push(format!(
                     "{}: option {} has date-limited meetings; partial-term optimization is not supported",
                     requirement.id, option.id
                 ));
             }
-
-            let searchable = !meetings.is_empty()
+            if is_pe_kind(&requirement.kind)
+                && !meetings.is_empty()
                 && option.unsupported_reason.is_none()
-                && !has_date_limit(&meetings);
+                && !bounded_pe
+            {
+                notices.push(format!(
+                    "{}: option {} is PE and requires complete valid start/end date bounds",
+                    requirement.id, option.id
+                ));
+            }
+
+            let searchable = option_is_searchable(
+                &requirement.kind,
+                &meetings,
+                option.unsupported_reason.is_some(),
+            );
             if searchable {
-                ensure_no_weekly_overlap(&meetings)?;
+                ensure_no_internal_overlap(&meetings, calendar)?;
             }
             options.push(PreparedOption {
                 option: option.clone(),
@@ -308,6 +389,7 @@ fn prepare(requirements: &[Requirement]) -> Result<(Vec<SearchGroup>, Vec<String
         }
         prepared.push(PreparedRequirement {
             id: requirement.id.clone(),
+            kind: requirement.kind.clone(),
             options,
         });
     }
@@ -395,6 +477,7 @@ fn prepare(requirements: &[Requirement]) -> Result<(Vec<SearchGroup>, Vec<String
         });
         groups.push(SearchGroup {
             requirement_id: requirement.id,
+            kind: requirement.kind,
             candidates,
         });
     }
@@ -413,20 +496,46 @@ fn canonical_meetings(meetings: &[Meeting]) -> Result<Vec<Meeting>> {
     Ok(meetings)
 }
 
-fn ensure_no_weekly_overlap(meetings: &[Meeting]) -> Result<()> {
-    for pair in meetings.windows(2) {
-        ensure!(
-            pair[0].weekday != pair[1].weekday || pair[0].end_minute <= pair[1].start_minute,
-            "meetings within one option overlap"
-        );
-    }
+fn option_is_searchable(kind: &str, meetings: &[Meeting], unsupported: bool) -> bool {
+    !meetings.is_empty()
+        && !unsupported
+        && if is_pe_kind(kind) {
+            bounded_pe_meetings(kind, meetings)
+        } else {
+            !meetings_have_date_limits(meetings)
+        }
+}
+
+fn ensure_no_internal_overlap(meetings: &[Meeting], calendar: Option<&TermCalendar>) -> Result<()> {
+    let overlap = if let Some(calendar) = calendar {
+        meetings_have_internal_calendar_overlap(calendar, meetings)
+    } else {
+        meetings_have_internal_natural_overlap(meetings)
+    };
+    ensure!(!overlap, "meetings within one option overlap");
     Ok(())
 }
 
-fn has_date_limit(meetings: &[Meeting]) -> bool {
-    meetings
-        .iter()
-        .any(|meeting| meeting.start_date.is_some() || meeting.end_date.is_some())
+fn candidates_conflict(
+    left: &Candidate,
+    right: &Candidate,
+    calendar: Option<&TermCalendar>,
+) -> bool {
+    left.choice.meetings.iter().any(|left_meeting| {
+        right
+            .choice
+            .meetings
+            .iter()
+            .any(|right_meeting| meetings_conflict(left_meeting, right_meeting, calendar))
+    })
+}
+
+fn meetings_conflict(left: &Meeting, right: &Meeting, calendar: Option<&TermCalendar>) -> bool {
+    if let Some(calendar) = calendar {
+        calendar_meetings_overlap(calendar, left, right)
+    } else {
+        natural_meetings_overlap(left, right)
+    }
 }
 
 fn make_choice(

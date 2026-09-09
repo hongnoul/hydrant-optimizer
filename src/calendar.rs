@@ -4,7 +4,10 @@ use chrono::{Datelike, LocalResult, NaiveDate, TimeZone};
 use chrono_tz::America::New_York;
 use sha2::{Digest, Sha256};
 
-use crate::model::{ChosenSection, Meeting, TermCalendar};
+use crate::model::{
+    ChosenSection, Meeting, TermCalendar, bounded_pe_meetings, is_pe_kind,
+    meetings_have_date_limits,
+};
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ExportReport {
@@ -37,7 +40,15 @@ pub fn export_ics(calendar: &TermCalendar, chosen: &[ChosenSection]) -> Result<E
             ));
             continue;
         }
-        if section.section.meetings.iter().any(has_date_limit) {
+        let bounded_pe = bounded_pe_meetings(&section.kind, &section.section.meetings);
+        if is_pe_kind(&section.kind) && !bounded_pe {
+            notices.push(format!(
+                "omitted {} {} {}: PE meetings require complete start/end date bounds",
+                section.course_id, section.kind, section.section.label
+            ));
+            continue;
+        }
+        if meetings_have_date_limits(&section.section.meetings) && !bounded_pe {
             notices.push(format!(
                 "omitted {} {} {}: date-limited meetings are not exported by the weekly calendar exporter",
                 section.course_id, section.kind, section.section.label
@@ -53,7 +64,7 @@ pub fn export_ics(calendar: &TermCalendar, chosen: &[ChosenSection]) -> Result<E
                     section.course_id, section.kind, section.section.label
                 )
             })?;
-            for date in matching_dates(calendar, meeting.weekday) {
+            for date in matching_dates(calendar, meeting, bounded_pe) {
                 let start = local_to_utc(date, meeting.start_minute).with_context(|| {
                     format!(
                         "cannot localize start of {} on {date}",
@@ -112,17 +123,32 @@ struct Event {
     description: String,
 }
 
-fn matching_dates(calendar: &TermCalendar, meeting_weekday: u8) -> Vec<NaiveDate> {
+fn matching_dates(calendar: &TermCalendar, meeting: &Meeting, bounded: bool) -> Vec<NaiveDate> {
     let mut dates = Vec::new();
-    let mut date = calendar.start;
-    while date <= calendar.end {
+    let mut date = if bounded {
+        meeting
+            .start_date
+            .expect("bounded PE meeting has a start date")
+            .max(calendar.start)
+    } else {
+        calendar.start
+    };
+    let end = if bounded {
+        meeting
+            .end_date
+            .expect("bounded PE meeting has an end date")
+            .min(calendar.end)
+    } else {
+        calendar.end
+    };
+    while date <= end {
         if !calendar.holidays.contains(&date) {
             let effective_weekday = calendar
                 .alternate_days
                 .get(&date)
                 .copied()
                 .unwrap_or_else(|| date.weekday().num_days_from_monday() as u8);
-            if effective_weekday == meeting_weekday {
+            if effective_weekday == meeting.weekday {
                 dates.push(date);
             }
         }
@@ -229,10 +255,6 @@ fn escape_text(value: &str) -> String {
         .replace('\n', "\\n")
         .replace(';', "\\;")
         .replace(',', "\\,")
-}
-
-fn has_date_limit(meeting: &Meeting) -> bool {
-    meeting.start_date.is_some() || meeting.end_date.is_some()
 }
 
 fn section_label(section: &ChosenSection) -> String {

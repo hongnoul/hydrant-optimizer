@@ -188,6 +188,74 @@ fn live_catalog_manual_refresh_optimize_switch_and_export() {
         .success()
     );
     assert_eq!(fs::read_to_string(&output).unwrap(), text);
+
+    let pe_courses = checked(dir, &["--offline", "search", "PE."]);
+    let pe_courses = pe_courses.as_array().unwrap();
+    assert!(
+        !pe_courses.is_empty(),
+        "live catalog has no PE offerings to validate"
+    );
+    let (pe_id, pe_solved) = pe_courses
+        .iter()
+        .find_map(|course| {
+            let id = course["id"].as_str()?;
+            if !id.starts_with("PE.") {
+                return None;
+            }
+            let solved = checked(dir, &["--offline", "optimize", id]);
+            (solved["solution"]["choices"].as_array()?.len() == 1).then_some((id, solved))
+        })
+        .expect("live PE feed has no supported dated offering");
+    let pe_meetings = pe_solved["sections"][0]["section"]["meetings"]
+        .as_array()
+        .unwrap();
+    assert!(!pe_meetings.is_empty());
+    let start = chrono::NaiveDate::parse_from_str(
+        pe_meetings[0]["start_date"].as_str().unwrap(),
+        "%Y-%m-%d",
+    )
+    .unwrap();
+    let end =
+        chrono::NaiveDate::parse_from_str(pe_meetings[0]["end_date"].as_str().unwrap(), "%Y-%m-%d")
+            .unwrap();
+    let pe_output = dir.join("live-pe.ics");
+    let pe_export = checked(
+        dir,
+        &[
+            "--offline",
+            "--output",
+            pe_output.to_str().unwrap(),
+            "optimize",
+            pe_id,
+            "--export",
+        ],
+    );
+    let pe_text = fs::read_to_string(pe_output).unwrap();
+    let pe_calendar: icalendar::Calendar = pe_text.parse().unwrap();
+    let pe_count = pe_calendar.events().count();
+    assert!(pe_count > 0);
+    assert_eq!(
+        pe_count,
+        pe_export["export"]["events"].as_u64().unwrap() as usize
+    );
+    for stamp in pe_text
+        .lines()
+        .filter_map(|line| line.strip_prefix("DTSTART:"))
+    {
+        let local = chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%dT%H%M%SZ")
+            .unwrap()
+            .and_utc()
+            .with_timezone(&chrono_tz::America::New_York);
+        assert!(
+            (start..=end).contains(&local.date_naive()),
+            "PE escaped its published offering range: {stamp}"
+        );
+    }
+    assert!(pe_text.contains(&format!("SUMMARY:{pe_id} pe")));
+    println!(
+        "LIVE_PE_ACCEPTANCE offerings={} selected={pe_id} events={pe_count} date_bounds={start}..{end} bounded_export=true",
+        pe_courses.len()
+    );
     println!(
         "LIVE_ACCEPTANCE score={} events={count} manual_retained=true member_switched=true offline=true fallback_with_age=true failed_refresh_preserved=true no_clobber=true",
         exported["solution"]["score"]

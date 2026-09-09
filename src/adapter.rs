@@ -41,6 +41,33 @@ pub fn parse_catalog(catalog: &str, term: &str) -> Result<Dataset> {
             bail!("duplicate course id in catalog: {key}");
         }
     }
+    if let Some(pe) = catalog_json.get("pe").filter(|value| !value.is_null()) {
+        let quarters = pe
+            .as_object()
+            .context("PE catalog must be a quarter object")?;
+        for (quarter, offerings) in quarters {
+            let quarter_number = quarter
+                .parse::<u8>()
+                .context("PE quarter must be a number")?;
+            ensure!(
+                (1..=5).contains(&quarter_number),
+                "PE quarter must be 1 through 5 (5 is IAP)"
+            );
+            let offerings = offerings
+                .as_object()
+                .context("PE quarter must contain an offerings object")?;
+            for (key, raw) in offerings {
+                let course = parse_pe_course(key, quarter_number, raw, &calendar)
+                    .with_context(|| format!("invalid PE offering {key} Q{quarter_number}"))?;
+                ensure!(
+                    !courses.contains_key(&course.id),
+                    "duplicate PE offering {}",
+                    course.id
+                );
+                courses.insert(course.id.clone(), course);
+            }
+        }
+    }
     ensure!(!courses.is_empty(), "catalog contains no usable classes");
 
     let last_updated =
@@ -54,6 +81,123 @@ pub fn parse_catalog(catalog: &str, term: &str) -> Result<Dataset> {
         last_updated,
         calendar: Some(calendar),
         courses,
+        notices,
+    })
+}
+
+fn parse_pe_course(key: &str, quarter: u8, raw: &Value, calendar: &TermCalendar) -> Result<Course> {
+    ensure!(raw.is_object(), "PE offering must be an object");
+    let number = string_field(raw, "number").unwrap_or_else(|| key.to_string());
+    ensure!(
+        number.starts_with("PE.") && number.len() > 3,
+        "PE number must begin with PE."
+    );
+    if let Some(value) = raw.get("quarter") {
+        ensure!(
+            value.as_u64() == Some(u64::from(quarter)),
+            "PE quarter does not match its catalog group"
+        );
+    }
+    // A stable ID per quarter permits selecting the same activity in Q1 and Q2,
+    // and avoids orphaning saved manual entries when another quarter is fetched.
+    let id = format!("{number}.Q{quarter}");
+    let period = if quarter == 5 {
+        "IAP".to_string()
+    } else {
+        format!("Q{quarter}")
+    };
+    let name = string_field(raw, "name")
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(number);
+    let start = optional_date_field(raw, "startDate")?;
+    let end = optional_date_field(raw, "endDate")?;
+    if let (Some(start), Some(end)) = (start, end) {
+        ensure!(start <= end, "PE startDate follows endDate");
+    }
+    let unsupported_reason = match (start, end) {
+        (Some(start), Some(end)) if end < calendar.start || start > calendar.end => {
+            Some("PE offering is outside the loaded academic term".to_string())
+        }
+        (Some(_), Some(_)) => None,
+        _ => Some("PE offering is missing reliable start/end dates".to_string()),
+    };
+    let limit = DateLimit {
+        start,
+        end,
+        unsupported: unsupported_reason.is_some(),
+    };
+    let dates = match (start, end) {
+        (Some(start), Some(end)) => format!("{start} to {end}"),
+        _ => "dates unknown".to_string(),
+    };
+    let sections = raw
+        .get("sections")
+        .and_then(Value::as_array)
+        .context("PE sections must be an array")?;
+    let numbers = raw
+        .get("sectionNumbers")
+        .map(|value| {
+            value
+                .as_array()
+                .context("PE sectionNumbers must be an array")
+        })
+        .transpose()?;
+    if let Some(numbers) = numbers {
+        ensure!(
+            numbers.len() == sections.len(),
+            "PE sectionNumbers length differs from sections"
+        );
+        ensure!(
+            numbers.iter().all(|value| value.as_str().is_some()),
+            "PE section numbers must be strings"
+        );
+    }
+    let labels = raw
+        .get("rawSections")
+        .map(|value| value.as_array().context("PE rawSections must be an array"))
+        .transpose()?;
+    let mut options = Vec::new();
+    for (index, section) in sections.iter().enumerate() {
+        let mut option = parse_section(
+            &id,
+            "pe",
+            index,
+            section,
+            labels,
+            &limit,
+            unsupported_reason.clone(),
+        )?;
+        let section_number = numbers
+            .and_then(|numbers| numbers[index].as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| (index + 1).to_string());
+        option.label = format!("PE {period} section {section_number} ({dates})");
+        // Distinct official section numbers remain selectable even when room/time
+        // match. Stable IDs must not depend on the source array order.
+        let identity = serde_json::to_vec(&(&id, &section_number, &option.meetings, &option.room))?;
+        option.id = format!("api-{:x}", Sha256::digest(identity));
+        options.push(option);
+    }
+    options.sort_by(|a, b| a.id.cmp(&b.id));
+    options.dedup_by(|a, b| a.id == b.id);
+    let has_unknown_times =
+        options.is_empty() || options.iter().any(|option| option.meetings.is_empty());
+    let mut notices = Vec::new();
+    if has_unknown_times {
+        notices.push("PE meeting times are unannounced or not machine-readable; check the published details before adding manual times".to_string());
+    }
+    if let Some(reason) = unsupported_reason {
+        notices.push(reason);
+    }
+    Ok(Course {
+        id: id.clone(),
+        title: format!("{} [PE {period}, {dates}]", name.trim()),
+        requirements: vec![Requirement {
+            id: format!("{id}/pe"),
+            kind: "pe".to_string(),
+            options,
+            has_unknown_times,
+        }],
         notices,
     })
 }

@@ -52,7 +52,7 @@ run format 0 cargo fmt --check
 run tests 0 cargo test --locked
 run clippy 0 cargo clippy --all-targets --locked -- -D warnings
 run release 0 cargo build --release --locked
-run release-regressions 0 cargo test --release --locked --test cli_workflow --test tui_acceptance
+run release-regressions 0 cargo test --release --locked --test cli_workflow --test tui_acceptance --test pe_catalog --test pe_dates
 run install 0 cargo install --path . --locked --offline --root "$evidence/install"
 installed="$evidence/install/bin/hydrant-optimizer"
 isolated=(env -i "HOME=$evidence/home" PATH=/usr/bin:/bin "$installed")
@@ -62,6 +62,16 @@ run installed-export 0 "${isolated[@]}" "${fixture[@]}" --json --output "$eviden
 grep -q '"status": "optimal_known"' "$evidence/installed-export.stdout"
 events=$(grep -c '^BEGIN:VEVENT' "$evidence/fixture.ics")
 [[ $events == 6 ]]
+pe_fixture=(--data-dir "$evidence/pe-data" --catalog "$repo/tests/fixtures/catalog-pe.json" --term "$repo/tests/fixtures/term.json")
+run installed-pe-search 0 "${isolated[@]}" "${pe_fixture[@]}" --json search swimming
+grep -q '"id": "PE.1000.Q1"' "$evidence/installed-pe-search.stdout"
+grep -q '"id": "PE.1000.Q2"' "$evidence/installed-pe-search.stdout"
+run installed-pe-export 0 "${isolated[@]}" "${pe_fixture[@]}" --json --output "$evidence/pe.ics" optimize A PE.1000.Q1 PE.1000.Q2 --export
+[[ $(grep -c '^BEGIN:VEVENT' "$evidence/pe.ics") == 9 ]]
+[[ $(grep -c '^SUMMARY:PE.' "$evidence/pe.ics") == 3 ]]
+for stamp in 20261026T150000Z 20261103T160000Z 20261109T160000Z; do
+  grep -q "^DTSTART:$stamp" "$evidence/pe.ics"
+done
 cp "$evidence/fixture.ics" "$evidence/original.ics"
 for format in text json; do
   args=(--output "$evidence/fixture.ics" optimize A C --export)

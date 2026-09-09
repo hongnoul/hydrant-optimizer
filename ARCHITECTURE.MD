@@ -19,14 +19,14 @@ CLI/TUI subject selection -> equivalent-time grouping -> pure exact optimizer
 | `calendar` | Dated event expansion, holidays/alternate weekdays, New York timezone, ICS |
 | `app` | Shared CLI/TUI orchestration, actual-member resolution, safe export |
 | `tui` | Keyboard state machine, selection/editor/result views, solver worker |
-| `tui::week` | Seven-day, 30-minute display grid built from resolved actual sections |
+| `tui::week` | Monday–Friday, 30-minute grid with component labels and weekend disclosure |
 | `main` | CLI options, local-file input, text/JSON output, application startup |
 
 Dependencies: `serde`/`serde_json` for data, `reqwest::blocking` for HTTPS, Ratatui/Crossterm for the terminal, `chrono`/`chrono-tz` for dates, `clap` for CLI parsing, `sha2` for content-derived IDs, and `tempfile` for safe file replacement/output. The calendar module emits RFC 5545 text, checked with the independent `icalendar` parser in tests. `Cargo.lock` pins the executable's dependency graph.
 
 ## Sources
 
-- `https://hydrant.mit.edu/latest.json`: `classes` keyed by subject number, `termInfo`, `lastUpdated`, `locations`, `pe`. Ignore PE.
+- `https://hydrant.mit.edu/latest.json`: `classes` keyed by subject number, `termInfo`, `lastUpdated`, `locations`, and `pe` grouped by quarter.
 - `https://hydrant.mit.edu/latestTerm.json`: current/pre-semester calendar metadata. Match the downloaded catalog's term rather than assuming the current semester.
 - Reference: <https://github.com/sipb/hydrant>. Upstream implementation is GPL-licensed. Consume the public data without copying upstream implementation.
 
@@ -38,7 +38,7 @@ start_minute = 360 + 30 * (start_slot % 34)
 end_minute = start_minute + 30 * length
 ```
 
-Published encoding uses 34 half-hour slots per weekday beginning at 06:00. The domain model is not restricted to that resolution. Manual entries preserve exact minutes and can use weekends. `half` and `quarterInfo` identify date-limited cases that must remain visible but are unsupported by the weekly optimizer.
+Published encoding uses 34 half-hour slots per weekday beginning at 06:00. The domain model is not restricted to that resolution. Manual entries preserve exact minutes and can use weekends. Academic `half` and `quarterInfo` identify date-limited cases that remain visible but unsupported. PE `sections` use the same encoding and have explicit `startDate`/`endDate`. Normalize each PE offering to a quarter-qualified course ID with one `pe` requirement. Keep official section numbers in labels and stable option identity. Unknown times and incomplete/out-of-term dates are disclosed.
 
 ## Shared model
 
@@ -73,19 +73,19 @@ Use owned records and stable IDs across UI state, persisted edits, solver result
 
 ## Search and UI
 
-The optimizer is a pure in-memory function. It receives selected merged requirements and an optional cancellation flag. See [OPTIMIZER.MD](OPTIMIZER.MD). All input sources follow this path.
+The optimizer is a pure in-memory function. It receives selected merged requirements, an optional cancellation flag, and, through `solve_with_calendar`, the loaded term calendar for dated PE conflicts. See [OPTIMIZER.MD](OPTIMIZER.MD). All input sources follow this path.
 
 The TUI owns selection IDs, search text, editor state, chosen result members, and notices. Selection survives filtering. Any selection/manual edit invalidates the old result. Search runs on an ordinary worker thread, communicating its result to the event loop. Escape can cancel, and cancellation never claims an optimum or infeasibility. There is no need for application-wide async. Initial HTTP loading happens before entering terminal raw mode.
 
 Terminal setup has restoration guards for normal exit, errors, and panics. The interface provides catalog selection, manual entry management, score/timetable, unresolved notices, actual same-time member switching, explicit infeasibility, and local export.
 
-The top-level search input replaces the former status panel. Subjects and manual entries sit above a full-width results pane so all seven weekday columns fit at 80 columns. The weekly timetable uses one row per 30-minute interval, including all intersecting exact-minute meetings. This is only display bucketing, never solver or export rounding. Exact meeting times and member details follow the grid. Left/Right and h/l cycle panes, while Up/Down and k/j navigate within the active pane. Search/editor input consumes text before navigation shortcuts.
+The top-level search input replaces the former status panel. Subjects and manual entries sit above a full-width results pane with five Monday–Friday columns at 80 columns. Cells retain lecture/recitation/lab/PE component labels when subject numbers must be shortened. Weekend meetings are disclosed and retained in details/export rather than assigned hidden grid columns. The weekly timetable uses one row per 30-minute interval, including all intersecting exact-minute meetings. This is only display bucketing, never solver or export rounding. Exact meeting times and member details follow the grid. Left/Right and h/l cycle panes, while Up/Down and k/j navigate within the active pane. Search/editor input consumes text before navigation shortcuts.
 
 The results viewport tracks wrapped-row offset separately from the selected section. PgUp/PgDn and Home/End scroll content without changing section selection. Section navigation reveals the selected row. Ratatui's rendered-line measurement accounts for word/Unicode wrapping and clamps offsets after resizing. All notices, action messages, and output paths are retained in the scrollable view. Result invalidation resets the viewport.
 
 ## Calendar and output safety
 
-Expand each selected actual section into dated occurrences within reliable term/meeting bounds. Apply holidays and alternate-weekday substitutions before timezone conversion. Interpret wall-clock times in `America/New_York`, then serialize each occurrence in UTC. This preserves 09:00 classes across DST rather than repeating a fixed UTC hour.
+Expand each selected actual section into dated occurrences within reliable term/meeting bounds. Fully bounded PE is supported, while other partial-term sections remain explicitly omitted. The weekly score/display combines all selected PE quarters, but conflict checks and event expansion respect their actual date windows. Apply holidays and alternate-weekday substitutions before timezone conversion. Interpret wall-clock times in `America/New_York`, then serialize each occurrence in UTC. This preserves 09:00 classes across DST rather than repeating a fixed UTC hour.
 
 Reject or disclose ambiguous/nonexistent local times, missing calendar bounds, and unsupported sections. Export known supported meetings and surface omissions. Include stable event UIDs and escaped labels/rooms. Do not claim that successful serialization alone proves calendar-client interoperability.
 

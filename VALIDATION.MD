@@ -1,5 +1,25 @@
 # Validation record
 
+## PE and weekday calendar: 2026-09-09
+
+Verified on **macOS arm64** with the complete `RUST_TEST_NOCAPTURE=1 bash scripts/verify-mvp.sh --live` replay: **86 local tests + all 3 opt-in tests = 89 passing tests**, with **all 16 verification gates passing**. This includes strict Clippy, formatting, locked release build, release PE/CLI/native-terminal regressions, and isolated installed-binary checks. The executable in `target/release` was rebuilt.
+
+Fresh public Hydrant data contained **2,314 selectable offerings**, including **38 PE offerings**. Live PE acceptance selected **`PE.0201.Q1`**, retained its **2026-09-22 through 2026-11-10** bounds, and independently parsed **7 exported events**, all checked against those dates. Existing academic live CLI and native-terminal/installed workflows still exported **50** and **113** events respectively.
+
+| Requirement or changed behavior | Concrete checks and observed result |
+|---|---|
+| PE appears in search and selection | Five `pe_catalog` tests check quarter-qualified IDs, stable identity across refresh/reordering, titles, IAP, malformed schema, unknown times, and missing dates. Actual terminal input searches Swimming and selects Q1 alongside an academic subject. Installed-binary search returns Q1 and Q2. Fresh live CLI discovery finds 38 PE offerings. All passed. |
+| PE scheduling respects dates | Ten `pe_dates` tests check overlapping/disjoint quarters, academic conflicts, adjacency, date-sensitive grouping, missing/invalid bounds, holidays, alternate weekdays, midnight, and manual overlays. An independent Cartesian-product oracle compares mixed academic/PE feasibility, returned choices, and union-week scores. Debug and release passed. |
+| PE export stays inside its offering | The terminal fixture exports 7 events with exactly one Q1 PE event on October 26. The mixed two-quarter installed workflow exports 9 events with exactly three PE events on October 26, November 3, and November 9. Live PE independently exports 7 events inside its published range. All parsed/count/date assertions passed. |
+| Manual PE defaults and validation | With A and PE selected, `a` on the highlighted PE offering opens its own editor, with `pe` and published dates prefilled. Both editor date fields are asserted from actual terminal output. Validation and persistence reject incomplete bounds or internally conflicting PE meetings and retain supported dated records. Passed. |
+| Calendar columns are Monday through Friday | Renderer tests and real 80×24, 120×72, and PE terminal workflows assert exactly five day columns. The seven-day input replay now shows only five half-hour rows from 09:00 to 11:00, explicitly discloses weekends, and still exports all 17 events with exact weekend/midnight times. Passed. |
+| Calendar identifies meeting components | Real terminal cells explicitly show `A Lec`, `A Rec`, `A Lab`, and `PE.1000.Q1 PE`. Renderer tests cover narrow/Unicode cells, subject truncation before component labels, other component kinds, shared buckets, selected highlighting, and complete short legends. Different-course shared buckets retain correct subject/component pairs or an explicit summary, never a misleading independently sorted pairing. Passed. |
+| Preserve all prior workflows | The full suite retains academic exactness/oracle coverage, unsupported non-PE date disclosure, manual edits and refresh preservation, member switching, scrolling, search/navigation, overwrite protection, infeasible export, network fallback, and terminal restoration. All existing live workflows passed again. |
+
+The feedback loop fixed the manual editor defaulting to the first selected academic subject instead of the highlighted PE offering, missing spacing after long PE IDs, ambiguous shared-bucket labels, and clipped legends. Terminal checks also caught fixture invocation and modal synchronization errors in the new harness. The entire verifier was rerun after the fixes, rather than only the new tests.
+
+**Scope:** PE conflicts and export use actual bounded calendar dates. Its score/grid deliberately use the combined weekly pattern across selected quarters, with an explicit notice. General partial-term academic optimization, PE registration/credit tracking, other-platform verification, and calendar-account import remain outside this result. The older records below describe earlier commits and their then-current seven-day display and narrower date scope.
+
 ## TUI UX refresh: 2026-09-09
 
 Implementation commit: **`2cc76fa`**. Complete-result replay commit: **`fc79e1e`**. Verified on **macOS arm64** with `bash scripts/verify-mvp.sh --live`.
@@ -152,7 +172,7 @@ Review also found that CLI manual editing re-enabled disabled records and allowe
 ## Limits of the evidence
 
 - Only macOS arm64 packaging and native terminal behavior were exercised. No Linux, Windows, cross-compilation, or minimum-toolchain result is claimed.
-- Full-term weekly optimization is the MVP boundary. Partial-term data is retained and disclosed but omitted, not treated as full-term.
+- Current scheduling supports full-term academics and fully dated PE. Other partial-term academic data remains retained and disclosed but omitted, not treated as full-term. PE scoring uses a combined weekly pattern, not an average or total of per-week costs.
 - Calendar files were parsed independently and checked by date/time assertions. They were not imported into a calendar account or verified in every calendar client.
 - Normal terminal restoration and recovery from export errors were exercised. Forced termination and injected panics were not acceptance-tested. Cancellation semantics were tested at the actual solver API, not with a timed long-running native-terminal workload.
 - Exactness evidence is the independent oracle and explicit edge cases. No broad performance benchmark or claim that this is the fastest solver is made.

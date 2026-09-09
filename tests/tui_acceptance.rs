@@ -146,6 +146,93 @@ fn week_row(screen: &str, time: &str) -> Option<Vec<String>> {
 }
 
 #[test]
+fn actual_tui_pe_search_selection_labels_and_bounded_export() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join("pe.ics");
+    let mut ui = Driver::with_size(
+        temp.path(),
+        &output,
+        55,
+        170,
+        &[
+            "--catalog",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/catalog-pe.json"
+            ),
+            "--term",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/term.json"),
+            "tui",
+            "--select",
+            "A",
+        ],
+    );
+    ui.marker("Preselected 1 subject(s)");
+    ui.send(b"/swimming\r");
+    ui.marker("> [ ] PE.1000.Q1");
+    ui.send(b"\r");
+    ui.marker("> [x] PE.1000.Q1");
+    assert!(
+        ui.screen
+            .screen()
+            .contents()
+            .contains("PE.1000.Q1 Swimming")
+    );
+    ui.send(b"a");
+    ui.marker("Manual editor opened for PE.1000.Q1");
+    ui.until("published PE dates in editor fields", |screen| {
+        [("Start date", "2026-10-26"), ("End date", "2026-10-30")]
+            .iter()
+            .all(|(label, date)| {
+                screen
+                    .lines()
+                    .any(|line| line.contains(label) && line.contains(date))
+            })
+    });
+    ui.send(b"\x1b");
+    ui.until("manual editor cancelled", |screen| {
+        !screen.contains("Add manual entry")
+    });
+    ui.send(b"o");
+    ui.marker("Optimal:");
+    ui.send(b"r");
+    ui.until("all academic and PE component labels", |screen| {
+        screen.contains("> Results") && week_row(screen, "11:00").is_some()
+    });
+    let screen = ui.screen.screen().contents();
+    let header: Vec<_> = screen
+        .lines()
+        .find(|line| line.contains("Time") && line.contains("Mon"))
+        .unwrap()
+        .split('│')
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .collect();
+    assert_eq!(header, ["Time", "Mon", "Tue", "Wed", "Thu", "Fri"]);
+    let academics = week_row(&screen, "09:00").unwrap();
+    assert_eq!(&academics[1..4], ["A Lec", "A Rec", "A Lab"]);
+    assert_eq!(week_row(&screen, "11:00").unwrap()[1], "PE.1000.Q1 PE");
+    ui.send(b"e");
+    ui.marker("Exported");
+    let text = fs::read_to_string(&output).unwrap();
+    let calendar: icalendar::Calendar = text.parse().unwrap();
+    assert_eq!(calendar.events().count(), 7);
+    let pe_events: Vec<_> = text
+        .split("BEGIN:VEVENT")
+        .skip(1)
+        .filter(|event| event.contains("SUMMARY:PE."))
+        .collect();
+    assert_eq!(pe_events.len(), 1);
+    assert!(pe_events[0].contains("DTSTART:20261026T150000Z"));
+    ui.send(b"q");
+    ui.marker("TERMINAL_RESTORED");
+    assert!(ui.child.wait().unwrap().success());
+    println!(
+        "TUI_PE_ACCEPTANCE search=true selection=true date_prefill=true weekday_columns=5 component_labels=Lec,Rec,Lab,PE events=7 bounded_pe_events=1 terminal_restored=true"
+    );
+}
+
+#[test]
 fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path();
@@ -228,16 +315,16 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     ui.send(b"o");
     ui.marker("Optimal: 7 occupied day(s), 0 gap minute(s).");
     ui.send(b"r");
-    ui.until("full seven-day grid through midnight", |s| {
-        s.contains("> Results") && s.contains("PgUp/Dn |") && week_row(s, "23:30").is_some()
+    ui.until("weekday grid with weekend disclosure", |s| {
+        s.contains("> Results")
+            && s.contains("PgUp/Dn |")
+            && week_row(s, "11:00").is_some()
+            && s.contains("weekend")
     });
     let screen = ui.screen.screen().contents();
     let headers = week_row(&screen, "Time").unwrap();
-    assert_eq!(
-        headers,
-        ["Time", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    );
-    let row_times: Vec<_> = (540..1440)
+    assert_eq!(headers, ["Time", "Mon", "Tue", "Wed", "Thu", "Fri"]);
+    let row_times: Vec<_> = (540..690)
         .step_by(30)
         .map(|minute| format!("{:02}:{:02}", minute / 60, minute % 60))
         .collect();
@@ -260,12 +347,10 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         ("10:00", 3),
         ("10:30", 4),
         ("11:00", 5),
-        ("11:30", 6),
-        ("23:30", 7),
     ] {
         assert_eq!(
             week_row(&screen, time).unwrap()[day],
-            "W",
+            "W Lec",
             "wrong day/slot {time}/{day}"
         );
     }
@@ -274,10 +359,10 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         "·",
         "end boundary must not occupy another bucket"
     );
-    assert!(screen.contains("2× means multiple meetings"));
+    assert!(screen.contains("2× = multiple meetings"));
     println!(
         "UX_OBSERVATION {}",
-        serde_json::json!({"requirement":"weekly_grid", "headers":headers, "visible_half_hour_rows":observed_times.len(), "first_row":observed_times.first(), "last_row":observed_times.last(), "monday_shared_bucket":first[1], "all_seven_days_placed":true, "adjacent_meetings_not_conflicts":true})
+        serde_json::json!({"requirement":"weekly_grid", "headers":headers, "visible_half_hour_rows":observed_times.len(), "first_row":observed_times.first(), "last_row":observed_times.last(), "monday_shared_bucket":first[1], "all_weekdays_placed":true,"weekend_disclosed":true, "adjacent_meetings_not_conflicts":true})
     );
 
     // Page into details and compare the user-visible exact times with the fixture.
@@ -373,7 +458,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         assert!(old.child.wait().unwrap().success());
         println!(
             "UX_COMPARISON {}",
-            serde_json::json!({"baseline_revision":"149c684", "before":{"status_header":true,"query_in_top_bar":false,"weekly_day_columns":0,"half_hour_table_rows":0,"l_then_enter":"deselects subject because focus did not move"},"after":{"status_header":false,"query_in_top_bar":true,"weekly_day_columns":7,"half_hour_table_rows":30,"l_then_enter":"edits Manual entry without changing selection"},"same_fixture_and_terminal_size":true})
+            serde_json::json!({"baseline_revision":"149c684", "before":{"status_header":true,"query_in_top_bar":false,"weekly_day_columns":0,"half_hour_table_rows":0,"l_then_enter":"deselects subject because focus did not move"},"after":{"status_header":false,"query_in_top_bar":true,"weekly_day_columns":5,"half_hour_table_rows":5,"l_then_enter":"edits Manual entry without changing selection"},"same_fixture_and_terminal_size":true})
         );
     }
 }
@@ -449,14 +534,12 @@ fn actual_tui_80x24_reaches_members_all_notices_and_exports() {
     ui.marker("Optimal: 1 occupied day(s), 0 gap minute(s).");
     ui.send(b"r");
     ui.marker("Timetable");
-    ui.until("seven-day 30-minute grid", |s| {
+    ui.until("weekday 30-minute grid", |s| {
         s.contains("> Results")
             && s.contains("PgUp/Dn |")
-            && [
-                "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "09:00", "09:30",
-            ]
-            .iter()
-            .all(|label| s.contains(label))
+            && ["Mon", "Tue", "Wed", "Thu", "Fri", "09:00", "09:30"]
+                .iter()
+                .all(|label| s.contains(label))
     });
     println!("WEEK_VIEW_80x24\n{}", ui.screen.screen().contents());
     ui.send(b"n");

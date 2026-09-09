@@ -33,7 +33,11 @@ pub fn optimize(
             notices.push(format!("{id}: no known meeting components"));
         }
     }
-    let mut solution = optimizer::solve(&requirements, cancel)?;
+    let mut solution = if let Some(calendar) = dataset.calendar.as_ref() {
+        optimizer::solve_with_calendar(&requirements, calendar, cancel)?
+    } else {
+        optimizer::solve(&requirements, cancel)?
+    };
     solution.unresolved.extend(notices);
     solution.unresolved.sort();
     solution.unresolved.dedup();
@@ -165,8 +169,9 @@ pub fn manual_entry(
     let kind = kind.trim().to_lowercase();
     ensure!(
         ["lecture", "recitation", "lab", "design"].contains(&kind.as_str())
+            || kind == "pe"
             || course.requirements.iter().any(|r| r.kind == kind),
-        "component must be published for this subject, or lecture, recitation, lab, or design"
+        "component must be published for this subject, or lecture, recitation, lab, design, or pe"
     );
     ensure!(!label.trim().is_empty(), "manual section needs a label");
     ensure!(
@@ -178,16 +183,26 @@ pub fn manual_entry(
     }
     meetings.sort();
     meetings.dedup();
-    let date_limited = meetings
-        .iter()
-        .any(|m| m.start_date.is_some() || m.end_date.is_some());
-    ensure!(
-        date_limited
-            || !meetings
-                .windows(2)
-                .any(|ms| ms[0].weekday == ms[1].weekday && ms[0].end_minute > ms[1].start_minute),
-        "meetings within one manual section overlap"
-    );
+    let date_limited = meetings_have_date_limits(&meetings);
+    if is_pe_kind(&kind) {
+        ensure!(
+            bounded_pe_meetings(&kind, &meetings),
+            "PE manual section needs complete start/end date bounds"
+        );
+        let internal_overlap = meetings_have_internal_date_window_overlap(&meetings)
+            || base.calendar.as_ref().is_some_and(|calendar| {
+                meetings_have_internal_calendar_overlap(calendar, &meetings)
+            });
+        ensure!(
+            !internal_overlap,
+            "meetings within one manual section overlap"
+        );
+    } else {
+        ensure!(
+            date_limited || !meetings_have_internal_natural_overlap(&meetings),
+            "meetings within one manual section overlap"
+        );
+    }
     let key = serde_json::to_vec(&(
         &base.term_id,
         course_id,
@@ -203,12 +218,9 @@ pub fn manual_entry(
         }
         None => format!("manual-{:x}", Sha256::digest(&key)),
     };
-    let unsupported_reason = meetings
-        .iter()
-        .any(|m| m.start_date.is_some() || m.end_date.is_some())
-        .then(|| {
-            "date-limited manual section: partial-term optimization is not supported".to_string()
-        });
+    let unsupported_reason = (!is_pe_kind(&kind) && date_limited).then(|| {
+        "date-limited manual section: partial-term optimization is not supported".to_string()
+    });
     Ok(ManualEntry {
         term_id: base.term_id.clone(),
         course_id: course_id.to_owned(),

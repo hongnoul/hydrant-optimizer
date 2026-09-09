@@ -96,6 +96,7 @@ pub fn apply_manual(base: &Dataset, store: &ManualStore) -> Result<Dataset> {
         .iter()
         .filter(|entry| entry.term_id == base.term_id && entry.enabled)
     {
+        let calendar = dataset.calendar.clone();
         let course = dataset.courses.get_mut(&entry.course_id).with_context(|| {
             format!(
                 "manual section {} references unknown subject {} in {}",
@@ -113,7 +114,7 @@ pub fn apply_manual(base: &Dataset, store: &ManualStore) -> Result<Dataset> {
                 ensure!(
                     matches!(
                         entry.kind.as_str(),
-                        "lecture" | "recitation" | "lab" | "design"
+                        "lecture" | "recitation" | "lab" | "design" | "pe"
                     ),
                     "manual section {} cannot create unknown component {}",
                     entry.option.id,
@@ -144,10 +145,19 @@ pub fn apply_manual(base: &Dataset, store: &ManualStore) -> Result<Dataset> {
             "duplicate section id after manual merge: {}",
             entry.option.id
         );
+        if is_pe_kind(&entry.kind)
+            && let Some(calendar) = calendar.as_ref()
+        {
+            ensure!(
+                !meetings_have_internal_calendar_overlap(calendar, &entry.option.meetings),
+                "manual section {} has overlapping PE meetings in the term calendar",
+                entry.option.id
+            );
+        }
         requirement.options.push(entry.option.clone());
         requirement.options.sort_by(|a, b| a.id.cmp(&b.id));
 
-        if is_supported_option(&entry.option) {
+        if is_supported_option(&entry.kind, &entry.option) {
             requirement.has_unknown_times = false;
             let unresolved_notice = format!("{}: no known meeting times", entry.kind);
             course.notices.retain(|notice| notice != &unresolved_notice);
@@ -392,37 +402,47 @@ fn validate_manual_entry(entry: &ManualEntry) -> Result<()> {
         "manual entry {} meetings must be sorted",
         entry.option.id
     );
-    let date_limited = entry
-        .option
-        .meetings
-        .iter()
-        .any(|meeting| meeting.start_date.is_some() || meeting.end_date.is_some());
-    ensure!(
-        date_limited
-            || !entry.option.meetings.windows(2).any(|meetings| {
-                meetings[0].weekday == meetings[1].weekday
-                    && meetings[0].end_minute > meetings[1].start_minute
-            }),
-        "manual entry {} has overlapping meetings",
-        entry.option.id
-    );
-    if date_limited {
+    let date_limited = meetings_have_date_limits(&entry.option.meetings);
+    if is_pe_kind(&entry.kind) {
+        ensure!(
+            bounded_pe_meetings(&entry.kind, &entry.option.meetings),
+            "manual entry {} with kind pe must have complete start/end date bounds",
+            entry.option.id
+        );
+        ensure!(
+            entry.option.unsupported_reason.is_none(),
+            "manual entry {} with kind pe and complete bounds must not be marked unsupported",
+            entry.option.id
+        );
+        ensure!(
+            !meetings_have_internal_date_window_overlap(&entry.option.meetings),
+            "manual entry {} has overlapping meetings",
+            entry.option.id
+        );
+    } else if date_limited {
         ensure!(
             entry.option.unsupported_reason.is_some(),
             "manual entry {} with date bounds must be marked unsupported",
+            entry.option.id
+        );
+    } else {
+        ensure!(
+            !meetings_have_internal_natural_overlap(&entry.option.meetings),
+            "manual entry {} has overlapping meetings",
             entry.option.id
         );
     }
     Ok(())
 }
 
-fn is_supported_option(option: &SectionOption) -> bool {
+fn is_supported_option(kind: &str, option: &SectionOption) -> bool {
     option.unsupported_reason.is_none()
         && !option.meetings.is_empty()
-        && option
-            .meetings
-            .iter()
-            .all(|meeting| meeting.start_date.is_none() && meeting.end_date.is_none())
+        && if is_pe_kind(kind) {
+            bounded_pe_meetings(kind, &option.meetings)
+        } else {
+            !meetings_have_date_limits(&option.meetings)
+        }
 }
 
 fn parse_weekday(text: &str) -> Result<u8> {

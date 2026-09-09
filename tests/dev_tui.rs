@@ -68,7 +68,7 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
         fs::remove_file(path.join("bin/cargo")).unwrap();
         fs::create_dir(path.join("target")).unwrap();
         std::os::unix::fs::symlink(repo.join("target"), path.join("target/tui-dev")).unwrap();
-        path.join("src/lib.rs")
+        path.join("src/tui.rs")
     } else {
         path.join("src/change.rs")
     };
@@ -135,9 +135,15 @@ cp "$REAL_TUI" target/tui-dev/debug/hydrant-optimizer
             output.clear();
         };
         until("Subjects");
-        fs::write(&watched, format!("{original}\n// reload\n")).unwrap();
+        let edited = if real {
+            assert!(original.contains("{}Subjects | {} found"));
+            original.replace("{}Subjects | {} found", "{}ReloadVerified | {} found")
+        } else {
+            format!("{original}\n// reload\n")
+        };
+        fs::write(&watched, edited).unwrap();
         until("[dev-tui] Building");
-        until("Subjects");
+        until(if real { "ReloadVerified" } else { "Subjects" });
         fs::write(&watched, "broken").unwrap();
         until("Build failed.");
         fs::write(&watched, &original).unwrap();

@@ -100,3 +100,11 @@ HYDRANT_ROOM_BASELINE_BIN=/absolute/path/to/baseline/target/debug/hydrant-optimi
 ```
 
 The normal acceptance assertions and observations always run. Setting `HYDRANT_ROOM_BASELINE_BIN` additionally requires the observed pre-change blank room row and the before/after comparison to pass.
+
+### Whole-result rerun at 13:43 UTC
+
+The established comparison was then enabled for **the entire combined project suite** using `HYDRANT_ROOM_BASELINE_BIN=... cargo test --locked --no-fail-fast -- --nocapture`, followed by `cargo fmt --check` and `cargo clippy --all-targets --locked -- -D warnings`. The completed run passed **121 tests, zero failures, four opt-in skips**, formatting, and strict lint. Its state is recorded at `d50412b` plus the concurrent working-tree changes listed in `whole-result-completed-state.log`.
+
+`whole-result-verified.log` reports the actual comparison: first row `W Lec` before and after, second row blank before and `Week room two` after, zero one-row room occurrences, one current-room occurrence, and an empty cell after the end. Switching changes the room to `Week room one` with zero stale-room occurrences. This run also passed the development watcher, every offline native TUI acceptance case, CLI/optimizer/storage/calendar/PE regressions, and all room edge cases. The same log directory contains `whole-result-format.log` and `whole-result-clippy.log`.
+
+Earlier whole-result attempts exposed an in-progress watcher-test synchronization failure and an hourly-label Clippy warning. The watcher assertions were repaired by concurrent work, the modulo check was replaced with `is_multiple_of(60)`, and the entire feedback loop was rerun after those repairs. The successful result above is not inferred from separate partial runs.

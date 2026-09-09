@@ -18,6 +18,35 @@ Implementation commit: **`2cc76fa`**. Verified on **macOS arm64** with `bash scr
 
 The review/verification loop caught and fixed a search bar squeezed out at small heights and a wrapped help assertion. The final help is a readable command list, and a read-only integration review found no remaining actionable issues. Platform verification remains scoped to macOS.
 
+### Complete-result replay and measured improvement
+
+The final replay explicitly reruns **the full suite covering this matrix**, not just the new renderer tests. A new native acceptance test, `actual_tui_week_replay_preserves_exact_times_and_records_observations`, drives the actual CLI and TUI with the same deterministic seven-day fixture and **120×72** terminal for both the refreshed executable and an isolated release build of pre-refresh commit **`149c684`**. It emits asserted `UX_OBSERVATION` and `UX_COMPARISON` JSON records. The existing **80×24** native test also emits an observation record after completing its workflow.
+
+| Requirement or changed public output | Replay check | Concrete observation |
+|---|---|---|
+| Weekly schedule structure | Native seven-day replay plus all eleven `tui::week` tests | The old executable had no day-column/half-hour table. The new executable displays **7 day columns** and exactly **30 rows from 09:00 through 23:30** for this fixture. Every expected row and day cell is checked from the terminal output. |
+| Exact placement, shared buckets, and legend | Native replay cell assertions | Monday shows **`2×W,X`** for adjacent 09:05–09:20 and 09:20–09:25 meetings. The legend explains shared buckets. Tuesday occupies 09:30 and 10:00, but not 10:30. Saturday and Sunday are present, including Sunday 23:35–24:00 in the 23:30 cell. The actual solver reports **7 occupied days, 0 gap minutes**, not a false conflict. |
+| Search location, metadata, selection, empty filtering, caret | Native replay, 80×24 PTY, search renderer/state tests | Old search text appears in the Subjects border while Status occupies the top. New query **`week`** appears in the first three rows beside the Search heading, with term **f26**, no Status heading, and **2 subjects still selected**. `hjkl` is entered as text. Renderer checks confirm zero-match count and visible Unicode query tail/caret after resizing. |
+| Pane and item navigation | Both native tests and `vim_and_arrow_navigation_are_equivalent_in_every_pane` | At 80×24, actual keys traverse **Subjects → Manual → Results → Manual → Subjects**. `j/k` and Up/Down move subject/result rows. State tests exercise both vertical families in all three panes. On identical before/after input, `l` then Enter previously deselected a subject because focus did not move. It now opens the manual editor with both subjects still selected. |
+| Section picker, `r`, scrolling, notice count/position | 80×24 PTY plus all viewport regressions | `n` shows member **2/2**. `r`/Home return to the weekly grid, PgUp/PgDn page independently of section selection, and End reaches the final **U9** unresolved and export notices. All 12 source/export notices and long action/output text are reachable in renderer checks. Resize and invalidation clamp/reset scroll offsets. |
+| Exact-time details, rooms, and ICS output | Native seven-day replay through `e`, independent ICS parser | Details retain **09:05–09:20**, **09:35–10:05**, and **23:35–24:00**. Switching members exports the chosen room and **17 events**. Exact UTC boundaries including `20261026T130500Z` and the Sunday-to-Monday midnight ending `20261109T050000Z` are asserted. The 80×24 workflow independently exports **6 events** with **Room A**. |
+| Help and modal/input boundaries | Native help checks, common-size renderer checks, editor/search/help state tests | The new h/l and j/k help entries, paging instructions, member controls, and closing hint fit at **80×24**, **120×32**, and **170×55**. Navigation letters remain editor/search text. Help cannot mutate a hidden pane. |
+| Existing solver/data/CLI/manual/export and terminal safety | Complete `verify-mvp.sh --live` run | This includes every existing oracle, parser, storage, CLI, renderer/state, and native test, all three opt-in tests, strict lint, release build, and isolated installed executable. Live and installed workflows must again produce **113 events**, preserve manual records and overwrite protection, and restore termios/alternate-screen state. |
+
+Reproduce the comparison as part of the **whole-result** verifier:
+
+```sh
+scratch=${JCODE_SCRATCH_DIR:-$PWD/target}
+mkdir -p "$scratch"
+baseline=$(mktemp -d "$scratch/ux-baseline.XXXXXX")
+git archive 149c684 | tar -x -C "$baseline"
+cargo build --release --locked --manifest-path "$baseline/Cargo.toml" --target-dir "$baseline/target"
+HYDRANT_UX_BASELINE_BIN="$baseline/target/release/hydrant-optimizer" \
+  RUST_TEST_NOCAPTURE=1 bash scripts/verify-mvp.sh --live
+```
+
+Without `HYDRANT_UX_BASELINE_BIN`, the new seven-day current-executable acceptance always runs. Only the optional historical comparison is omitted. Both variants use isolated temporary data/output and never export into a calendar account.
+
 ## Original MVP verification
 
 Verified on **2026-09-08**, macOS **26.6.2**, **arm64**, Rust **1.98.0**. This records checks against this repository's real library and executable, not the earlier isolated feasibility probes.

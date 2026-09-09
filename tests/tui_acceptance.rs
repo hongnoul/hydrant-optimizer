@@ -28,6 +28,24 @@ impl Driver {
     }
 
     fn with_size(dir: &Path, output: &Path, rows: u16, cols: u16, args: &[&str]) -> Self {
+        Self::with_binary(
+            env!("CARGO_BIN_EXE_hydrant-optimizer"),
+            dir,
+            output,
+            rows,
+            cols,
+            args,
+        )
+    }
+
+    fn with_binary(
+        binary: &str,
+        dir: &Path,
+        output: &Path,
+        rows: u16,
+        cols: u16,
+        args: &[&str],
+    ) -> Self {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows,
@@ -38,7 +56,7 @@ impl Driver {
             .unwrap();
         // Inspect the real slave's termios before and after the app exits.
         let mut cmd = CommandBuilder::new("/bin/sh");
-        cmd.args(["-c", "before=$(stty -g); \"$@\"; code=$?; after=$(stty -g); if [ \"$before\" = \"$after\" ]; then printf '\nTERMINAL_RESTORED\n'; else printf '\nTERMINAL_NOT_RESTORED\n'; exit 99; fi; exit \"$code\"", "--",env!("CARGO_BIN_EXE_hydrant-optimizer"),"--offline","--data-dir",dir.to_str().unwrap(),"--output",output.to_str().unwrap()]);
+        cmd.args(["-c", "before=$(stty -g); \"$@\"; code=$?; after=$(stty -g); if [ \"$before\" = \"$after\" ]; then printf '\nTERMINAL_RESTORED\n'; else printf '\nTERMINAL_NOT_RESTORED\n'; exit 99; fi; exit \"$code\"", "--",binary,"--offline","--data-dir",dir.to_str().unwrap(),"--output",output.to_str().unwrap()]);
         cmd.args(args);
         cmd.env("TERM", "xterm-256color");
         let child = pair.slave.spawn_command(cmd).unwrap();
@@ -112,6 +130,252 @@ fn cli(dir: &Path, args: &[&str]) -> Value {
         String::from_utf8_lossy(&out.stderr)
     );
     serde_json::from_slice(&out.stdout).unwrap()
+}
+
+fn week_row(screen: &str, time: &str) -> Option<Vec<String>> {
+    screen
+        .lines()
+        .find(|line| line.split('│').any(|cell| cell.trim() == time))
+        .map(|line| {
+            line.split('│')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+}
+
+#[test]
+fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    let catalog_path = dir.join("week.json");
+    let mut catalog: Value = serde_json::from_str(include_str!("fixtures/catalog.json")).unwrap();
+    catalog["classes"] = serde_json::json!({
+        "W": {"number":"W", "name":"Week replay", "sectionKinds":["lecture"], "lectureSections":[]},
+        "X": {"number":"X", "name":"Shared bucket", "sectionKinds":["lecture"], "lectureSections":[]}
+    });
+    fs::write(&catalog_path, catalog.to_string()).unwrap();
+    let term_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/term.json");
+    let source = [
+        "--catalog",
+        catalog_path.to_str().unwrap(),
+        "--term",
+        term_path,
+    ];
+    let meetings = "Mon 09:05-09:20;Tue 09:35-10:05;Wed 10:00-10:30;Thu 10:30-11:00;Fri 11:00-11:30;Sat 11:30-12:00;Sun 23:35-24:00";
+    // Enter the exact-minute fixture through the actual CLI, not AppState helpers.
+    for (id, label, room, times) in [
+        ("W", "Week one", "Week room one", meetings),
+        ("W", "Week two", "Week room two", meetings),
+        ("X", "Short meeting", "Bucket room", "Mon 09:20-09:25"),
+    ] {
+        let mut args = source.to_vec();
+        args.extend([
+            "manual",
+            "add",
+            "--course",
+            id,
+            "--kind",
+            "lecture",
+            "--label",
+            label,
+            "--room",
+            room,
+            "--meetings",
+            times,
+        ]);
+        cli(dir, &args);
+    }
+    let mut reference_args = source.to_vec();
+    reference_args.extend(["optimize", "W", "X"]);
+    let reference = cli(dir, &reference_args);
+    assert_eq!(
+        reference["solution"]["score"],
+        serde_json::json!({"occupied_days":7,"gap_minutes":0})
+    );
+    let next_room = reference["solution"]["choices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|choice| choice["requirement_id"] == "W/lecture")
+        .unwrap()["members"][1]["room"]
+        .as_str()
+        .unwrap();
+    let mut args = source.to_vec();
+    args.extend(["tui", "--select", "W", "--select", "X"]);
+    let output = dir.join("week.ics");
+    let mut ui = Driver::with_size(dir, &output, 72, 120, &args);
+    ui.marker("Preselected 2 subject(s)");
+    ui.send(b"/week\r");
+    ui.until("query visible in top search bar", |s| {
+        let header = s.lines().take(3).collect::<String>();
+        header.contains("Search subjects") && header.contains("week") && s.contains("selected 2")
+    });
+    let header = ui
+        .screen
+        .screen()
+        .contents()
+        .lines()
+        .take(3)
+        .collect::<String>();
+    assert!(!header.contains("Status"));
+    assert!(header.contains("f26"));
+    println!(
+        "UX_OBSERVATION {}",
+        serde_json::json!({"requirement":"top_search", "query":"week", "in_top_three_rows":true, "old_status_header":false, "selection_retained":2})
+    );
+    ui.send(b"o");
+    ui.marker("Optimal: 7 occupied day(s), 0 gap minute(s).");
+    ui.send(b"r");
+    ui.until("full seven-day grid through midnight", |s| {
+        s.contains("> Results") && s.contains("PgUp/Dn |") && week_row(s, "23:30").is_some()
+    });
+    let screen = ui.screen.screen().contents();
+    let headers = week_row(&screen, "Time").unwrap();
+    assert_eq!(
+        headers,
+        ["Time", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    );
+    let row_times: Vec<_> = (540..1440)
+        .step_by(30)
+        .map(|minute| format!("{:02}:{:02}", minute / 60, minute % 60))
+        .collect();
+    let observed_times: Vec<_> = screen
+        .lines()
+        .filter_map(|line| line.split('│').nth(2).map(str::trim))
+        .filter(|cell| cell.len() == 5 && chrono::NaiveTime::parse_from_str(cell, "%H:%M").is_ok())
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        observed_times, row_times,
+        "the actual terminal must contain exactly the expected 30-minute rows"
+    );
+    let first = week_row(&screen, "09:00").unwrap();
+    assert!(first[1].contains("2×") && first[1].contains('W') && first[1].contains('X'));
+    assert!(first[2..].iter().all(|cell| cell == "·"));
+    for (time, day) in [
+        ("09:30", 2),
+        ("10:00", 2),
+        ("10:00", 3),
+        ("10:30", 4),
+        ("11:00", 5),
+        ("11:30", 6),
+        ("23:30", 7),
+    ] {
+        assert_eq!(
+            week_row(&screen, time).unwrap()[day],
+            "W",
+            "wrong day/slot {time}/{day}"
+        );
+    }
+    assert_eq!(
+        week_row(&screen, "10:30").unwrap()[2],
+        "·",
+        "end boundary must not occupy another bucket"
+    );
+    assert!(screen.contains("2× means multiple meetings"));
+    println!(
+        "UX_OBSERVATION {}",
+        serde_json::json!({"requirement":"weekly_grid", "headers":headers, "visible_half_hour_rows":observed_times.len(), "first_row":observed_times.first(), "last_row":observed_times.last(), "monday_shared_bucket":first[1], "all_seven_days_placed":true, "adjacent_meetings_not_conflicts":true})
+    );
+
+    // Page into details and compare the user-visible exact times with the fixture.
+    ui.send(b"\x1b[F");
+    ui.until("exact labels and rooms", |s| {
+        s.contains("Sun 23:35-24:00")
+            && s.contains("Mon 09:05-09:20")
+            && s.contains("Tue 09:35-10:05")
+            && s.contains("Bucket room")
+    });
+    ui.send(b"n");
+    ui.until("actual member switched", |s| {
+        s.contains("(2/2)") && s.contains(next_room)
+    });
+    ui.send(b"e");
+    ui.marker("Exported");
+    let calendar = fs::read_to_string(&output).unwrap();
+    let parsed: icalendar::Calendar = calendar.parse().unwrap();
+    assert_eq!(parsed.events().count(), 17);
+    for exact in [
+        "DTSTART:20261026T130500Z",
+        "DTEND:20261026T132000Z",
+        "DTSTART:20261026T132000Z",
+        "DTEND:20261026T132500Z",
+        "DTSTART:20261109T043500Z",
+        "DTEND:20261109T050000Z",
+    ] {
+        assert!(
+            calendar.contains(exact),
+            "display bucketing must not change {exact}"
+        );
+    }
+    assert!(calendar.contains(&format!("LOCATION:{next_room}")));
+    println!(
+        "UX_OBSERVATION {}",
+        serde_json::json!({"requirement":"exact_details_and_export", "displayed_exact_times":["Mon 09:05-09:20","Tue 09:35-10:05","Sun 23:35-24:00"], "switched_room":next_room, "events":parsed.events().count(), "exact_utc_boundaries_preserved":true})
+    );
+    // The same l+Enter sequence used against the baseline must edit Manual, not deselect W.
+    ui.send(b"\tl\r");
+    ui.marker("Edit manual entry");
+    assert!(ui.screen.screen().contents().contains("selected 2"));
+    ui.send(b"\x1b");
+    ui.until("editor closed", |s| !s.contains("Edit manual entry"));
+    ui.send(b"q");
+    ui.marker("TERMINAL_RESTORED");
+    assert!(ui.child.wait().unwrap().success());
+    println!(
+        "UX_OBSERVATION {}",
+        serde_json::json!({"requirement":"horizontal_navigation", "l_then_enter":"edits Manual entry", "selected_subjects_after":2, "terminal_restored":true})
+    );
+
+    // Optional comparative replay uses an independently built pre-refresh executable.
+    // The main acceptance above always runs, even without that historical artifact.
+    if let Ok(binary) = std::env::var("HYDRANT_UX_BASELINE_BIN") {
+        let mut old = Driver::with_binary(
+            &binary,
+            dir,
+            &dir.join("baseline-unused.ics"),
+            72,
+            120,
+            &args,
+        );
+        old.marker("Preselected 2 subject(s)");
+        old.send(b"/week\r");
+        old.until("baseline query in subject pane", |s| {
+            s.contains("Subjects (/ search: week)")
+        });
+        let header = old
+            .screen
+            .screen()
+            .contents()
+            .lines()
+            .take(3)
+            .collect::<String>();
+        assert!(header.contains("Status"));
+        assert!(!header.contains("week"));
+        old.send(b"o");
+        old.marker("Optimal: 7 occupied day(s), 0 gap minute(s).");
+        old.send(b"r\x1b[H");
+        old.until("baseline timetable at top", |s| {
+            s.contains("Timetable")
+                && s.contains("Status: OptimalKnown")
+                && s.contains("Sun 23:35-24:00")
+        });
+        let old_screen = old.screen.screen().contents();
+        assert!(week_row(&old_screen, "Time").is_none());
+        assert!(week_row(&old_screen, "09:00").is_none());
+        old.send(b"\tl\r");
+        old.marker("selected 1");
+        assert!(!old.screen.screen().contents().contains("Edit manual entry"));
+        old.send(b"q");
+        old.marker("TERMINAL_RESTORED");
+        assert!(old.child.wait().unwrap().success());
+        println!(
+            "UX_COMPARISON {}",
+            serde_json::json!({"baseline_revision":"149c684", "before":{"status_header":true,"query_in_top_bar":false,"weekly_day_columns":0,"half_hour_table_rows":0,"l_then_enter":"deselects subject because focus did not move"},"after":{"status_header":false,"query_in_top_bar":true,"weekly_day_columns":7,"half_hour_table_rows":30,"l_then_enter":"edits Manual entry without changing selection"},"same_fixture_and_terminal_size":true})
+        );
+    }
 }
 
 #[test]
@@ -233,6 +497,19 @@ fn actual_tui_80x24_reaches_members_all_notices_and_exports() {
         ui.raw
             .windows(b"\x1b[?1049l".len())
             .any(|w| w == b"\x1b[?1049l")
+    );
+    println!(
+        "UX_OBSERVATION {}",
+        serde_json::json!({
+            "requirement":"small_terminal_controls_and_disclosure", "terminal":"80x24",
+            "search_header_replaces_status":true, "hjkl_typed_in_search":true,
+            "horizontal_focus_sequence":["Subjects","Manual","Results","Manual","Subjects"],
+            "vertical_keys_checked":["j","k","Up","Down"],
+            "result_navigation_checked":["r","PgUp","PgDn","Home","End","n"],
+            "last_unresolved_notice_reached":"U9", "last_export_notice_reached":"U9",
+            "same_time_member_position":"2/2", "exported_events":parsed.events().count(),
+            "exported_selected_room":"Room A", "termios_and_alternate_screen_restored":true
+        })
     );
 }
 

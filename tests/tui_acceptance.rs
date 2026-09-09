@@ -48,6 +48,36 @@ fn quit_session(mut ui: Driver) {
 }
 
 #[test]
+fn actual_tui_mouse_clicks_focus_panes_and_route_keyboard_input() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ui = session_ui(dir.path(), &[]);
+    ui.marker("No classes selected.");
+    // SGR mouse coordinates are one-based. Clicks focus without activating rows.
+    ui.send(b"\x1b[<0;2;2M\x1b[<0;2;2m");
+    ui.marker("> Search subjects");
+    ui.send(b"Algorithms");
+    ui.marker("Subjects | 1 found");
+    ui.send(b"\x1b[<0;2;5M\x1b[<0;2;5m");
+    ui.marker("> Subjects");
+    assert_eq!(saved_selection(dir.path()), serde_json::json!([]));
+    ui.send(b" ");
+    ui.marker("Optimal:");
+    ui.send(b"\x1b[<0;70;5M\x1b[<0;70;5m");
+    ui.marker("> Selected classes");
+    assert_eq!(saved_selection(dir.path()), serde_json::json!(["A"]));
+    ui.send(b"\x1b[<0;2;20M\x1b[<0;2;20m");
+    ui.marker("> Timetable");
+    ui.resize(24, 80);
+    ui.marker("Timetable");
+    ui.send(b"\x1b[<0;60;5M\x1b[<0;60;5m");
+    ui.marker("> Selected classes");
+    ui.send(b" ");
+    ui.marker("No classes selected.");
+    assert_eq!(saved_selection(dir.path()), serde_json::json!([]));
+    quit_session(ui);
+}
+
+#[test]
 fn actual_tui_autosaves_restores_and_keeps_cleared_selection_empty() {
     let dir = tempfile::tempdir().unwrap();
     let mut ui = session_ui(dir.path(), &[]);

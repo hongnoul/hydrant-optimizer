@@ -1,4 +1,4 @@
-//! Deterministic per-course color assignment shared by the TUI and ICS export.
+//! Deterministic per-course TUI colors and shared section labels.
 //!
 //! Colors are assigned by the position of each course in the sorted distinct
 //! course list (`nth distinct course`), so every course in a schedule of up to
@@ -6,12 +6,7 @@
 //! `hash(course_id) % PALETTE_LEN` mapping, which could collide even with two
 //! courses.
 //!
-//! The palette order matches `tui::week::PALETTE` by index. Each entry also
-//! carries the closest Google Calendar event color (hex + `colorId`) so the
-//! ICS exporter can embed data that makes manual recoloring after import a
-//! one-click choice. Google Calendar ignores per-event colors on ICS import,
-//! so the exporter also repeats the assignment in `CATEGORIES`, `DESCRIPTION`,
-//! and `X-HYDRANT-*` properties; see `calendar::export_ics`.
+//! The palette order matches `tui::week::PALETTE` by index.
 
 use std::collections::BTreeSet;
 
@@ -19,26 +14,6 @@ use crate::model::ChosenSection;
 
 /// Number of distinct course colors before the palette wraps.
 pub const PALETTE_LEN: usize = 8;
-
-/// Google Calendar event color name for each palette index.
-pub const GCAL_NAMES: [&str; PALETTE_LEN] = [
-    "Blueberry",
-    "Basil",
-    "Grape",
-    "Peacock",
-    "Lavender",
-    "Sage",
-    "Flamingo",
-    "Banana",
-];
-
-/// Hex background for each palette index (closest Google Calendar event color).
-pub const GCAL_HEXES: [&str; PALETTE_LEN] = [
-    "#3F51B5", "#0B8043", "#8E24AA", "#039BE5", "#7986CB", "#33B679", "#E67C73", "#F6BF26",
-];
-
-/// Google Calendar event `colorId` for each palette index.
-pub const GCAL_IDS: [&str; PALETTE_LEN] = ["9", "10", "3", "7", "1", "2", "4", "5"];
 
 /// Sorted distinct course IDs in a chosen-section list.
 pub fn sorted_course_ids(sections: &[ChosenSection]) -> Vec<String> {
@@ -60,15 +35,6 @@ pub fn course_color_index(course_id: &str, ordered_course_ids: &[String]) -> usi
         .position(|id| id == course_id)
         .unwrap_or(0)
         % PALETTE_LEN
-}
-
-/// Full color record for one palette index.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CourseColor {
-    pub index: usize,
-    pub gcal_name: &'static str,
-    pub hex: &'static str,
-    pub gcal_id: &'static str,
 }
 
 /// Short timetable legend for a section-kind string, e.g. `Lec`, `Rec`, `Lab`.
@@ -109,22 +75,6 @@ fn titlecase_ascii(value: &str) -> String {
         output.extend(ch.to_lowercase());
     }
     output
-}
-
-impl CourseColor {
-    pub fn by_index(index: usize) -> Self {
-        let index = index % PALETTE_LEN;
-        Self {
-            index,
-            gcal_name: GCAL_NAMES[index],
-            hex: GCAL_HEXES[index],
-            gcal_id: GCAL_IDS[index],
-        }
-    }
-
-    pub fn for_course(course_id: &str, ordered_course_ids: &[String]) -> Self {
-        Self::by_index(course_color_index(course_id, ordered_course_ids))
-    }
 }
 
 #[cfg(test)]
@@ -172,8 +122,11 @@ mod tests {
 
     #[test]
     fn palette_wraps_only_past_capacity() {
-        assert_eq!(CourseColor::by_index(8).index, 0);
-        assert_eq!(CourseColor::by_index(2).hex, "#8E24AA");
-        assert_eq!(CourseColor::by_index(2).gcal_id, "3");
+        let ordered = (0..=PALETTE_LEN)
+            .map(|index| format!("course-{index}"))
+            .collect::<Vec<_>>();
+        for (index, course_id) in ordered.iter().enumerate() {
+            assert_eq!(course_color_index(course_id, &ordered), index % PALETTE_LEN);
+        }
     }
 }

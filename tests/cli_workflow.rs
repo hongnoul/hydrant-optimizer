@@ -123,6 +123,32 @@ fn actual_cli_selection_manual_entry_optimization_switch_and_export() {
     assert!(text.contains("DTSTART:20261026T130000Z"));
     assert!(text.contains("DTSTART:20261103T140000Z"));
     assert!(!text.contains("DTSTART:20261102"));
+    // Validate the actual file handed to calendar clients, not just the
+    // exporter helper: every event has only standard meeting details.
+    let unfolded = text.replace("\r\n ", "");
+    let event_properties = [
+        "UID",
+        "DTSTAMP",
+        "DTSTART",
+        "DTEND",
+        "SUMMARY",
+        "LOCATION",
+        "DESCRIPTION",
+    ];
+    for event in unfolded.split("BEGIN:VEVENT\r\n").skip(1) {
+        let (body, _) = event.split_once("END:VEVENT\r\n").unwrap();
+        let properties = body
+            .lines()
+            .map(|line| line.split_once(':').unwrap().0)
+            .collect::<Vec<_>>();
+        assert_eq!(properties, event_properties);
+    }
+    for removed in ["color", "categories:", "x-hydrant-", "google"] {
+        assert!(
+            !unfolded.to_ascii_lowercase().contains(removed),
+            "unexpected export metadata {removed}:\n{unfolded}"
+        );
+    }
     // A repeat export must mint a fresh Unix-time file, never overwrite.
     let again = json_ok(
         dir,

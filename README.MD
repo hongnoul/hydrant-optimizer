@@ -121,7 +121,7 @@ Press `a` on the highlighted offering to add manual times. A timed published PE 
 - Collapse only interchangeable complete time patterns. After optimization, switch actual sections/rooms without changing the timetable or violating pairing restrictions.
 - Manual sections use the same normalized model as published sections. Alternative sections may contain several meetings. Keep known components when supplying TBA information.
 - Show selected sections, timetable, score, unresolved-time notices, and explicit infeasibility. An interrupted search never claims optimality.
-- Export only selected, known, supported meetings. Calendar export uses `America/New_York`, semester bounds, holidays and alternate-weekday dates. Every export filename carries a Unix-time signature, so repeats never overwrite. Each exported event carries the same nth-distinct-course color as the timetable (`COLOR`, `CATEGORIES`, `DESCRIPTION`, `X-HYDRANT-*` with the closest Google Calendar event color name, hex, and `colorId`). Google Calendar ignores per-event colors on ICS import and colors imported events by calendar instead, so reapply the named Google color after import if desired.
+- Export only selected, known, supported meetings. Calendar export uses `America/New_York`, semester bounds, holidays and alternate-weekday dates. Every export filename carries a Unix-time signature, so repeats never overwrite. ICS exports contain meeting details only, without color metadata or color hints. Calendar apps control imported event colors independently of the TUI's per-course colors.
 - Infeasible CLI optimization returns explicit text/JSON and exit code **2**, including with `--export`. No calendar is created or modified for an infeasible result.
 
 ## Boundaries

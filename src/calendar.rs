@@ -4,7 +4,7 @@ use chrono::{Datelike, LocalResult, NaiveDate, TimeZone};
 use chrono_tz::America::New_York;
 use sha2::{Digest, Sha256};
 
-use crate::color::{self, CourseColor};
+use crate::color::component_label;
 use crate::model::{
     ChosenSection, Meeting, TermCalendar, bounded_pe_meetings, is_pe_kind,
     meetings_have_date_limits,
@@ -28,11 +28,7 @@ pub fn export_ics(calendar: &TermCalendar, chosen: &[ChosenSection]) -> Result<E
     );
     let mut notices = Vec::new();
     let mut events = Vec::new();
-    // Same nth-distinct-course order as the TUI so ICS colors match the grid.
-    let ordered_courses = color::sorted_course_ids(chosen);
-
     for section in chosen {
-        let course_color = CourseColor::for_course(&section.course_id, &ordered_courses);
         if let Some(reason) = &section.section.unsupported_reason {
             notices.push(format!(
                 "omitted {} {} {}: {reason}",
@@ -88,31 +84,15 @@ pub fn export_ics(calendar: &TermCalendar, chosen: &[ChosenSection]) -> Result<E
                     uid: stable_uid(calendar, section, meeting, date),
                     start,
                     end,
-                    summary: format!(
-                        "{} {}",
-                        section.course_id,
-                        color::component_label(&section.kind)
-                    ),
+                    summary: format!("{} {}", section.course_id, component_label(&section.kind)),
                     location: section.section.room.clone(),
                     description: format!(
-                        "{}\n{} {} {}\nColor: {} {} (Google Calendar event colorId {})",
+                        "{}\n{} {} {}",
                         section.course_title,
                         section.course_id,
                         section.kind,
                         section.section.label,
-                        course_color.gcal_name,
-                        course_color.hex,
-                        course_color.gcal_id,
                     ),
-                    color: course_color.hex.to_string(),
-                    categories: format!(
-                        "hydrant-optimizer,{},{}",
-                        section.course_id, course_color.gcal_name,
-                    ),
-                    hydrant_course: section.course_id.clone(),
-                    hydrant_color_name: course_color.gcal_name.to_string(),
-                    hydrant_color_hex: course_color.hex.to_string(),
-                    hydrant_color_id: course_color.gcal_id.to_string(),
                 });
             }
         }
@@ -145,12 +125,6 @@ struct Event {
     summary: String,
     location: String,
     description: String,
-    color: String,
-    categories: String,
-    hydrant_course: String,
-    hydrant_color_name: String,
-    hydrant_color_hex: String,
-    hydrant_color_id: String,
 }
 
 fn matching_dates(calendar: &TermCalendar, meeting: &Meeting, bounded: bool) -> Vec<NaiveDate> {
@@ -263,20 +237,6 @@ fn render_calendar(events: &[Event]) -> String {
         };
         push_property(&mut text, "LOCATION", &location);
         push_property(&mut text, "DESCRIPTION", &event.description);
-        // RFC 7986 display color. Apple Calendar honors it; Google Calendar
-        // ignores per-event colors on ICS import (events take the calendar
-        // color instead), so CATEGORIES + DESCRIPTION + X-HYDRANT-* repeat the
-        // same assignment for filtering and one-click manual recoloring.
-        push_property(&mut text, "COLOR", &event.color);
-        push_property(&mut text, "CATEGORIES", &event.categories);
-        push_property(&mut text, "X-HYDRANT-COURSE", &event.hydrant_course);
-        push_property(&mut text, "X-HYDRANT-COLOR-NAME", &event.hydrant_color_name);
-        push_property(&mut text, "X-HYDRANT-COLOR", &event.hydrant_color_hex);
-        push_property(
-            &mut text,
-            "X-HYDRANT-GCAL-COLOR-ID",
-            &event.hydrant_color_id,
-        );
         text.push_str("END:VEVENT\r\n");
     }
     text.push_str("END:VCALENDAR\r\n");

@@ -723,31 +723,31 @@ fn chosen_for(course_id: &str, weekday: u8) -> ChosenSection {
 }
 
 #[test]
-fn calendar_embeds_nth_distinct_color_matching_the_tui() {
+fn calendar_exports_meeting_details_without_color_metadata() {
     let calendar = TermCalendar {
         start: date("2026-10-26"),
         end: date("2026-10-26"),
         holidays: Default::default(),
         alternate_days: Default::default(),
     };
-    // Monday-only calendar date, so only the Monday section exports.
     let report =
-        calendar::export_ics(&calendar, &[chosen_for("B", 0), chosen_for("A", 2)]).unwrap();
-    assert_eq!(report.event_count, 1);
+        calendar::export_ics(&calendar, &[chosen_for("B", 0), chosen_for("A", 0)]).unwrap();
+    assert_eq!(report.event_count, 2);
     let unfolded = report.ics.replace("\r\n ", "");
-    // Sorted order is A, B, so B is palette index 1: Basil #0B8043, colorId 10.
-    for expected in [
-        "COLOR:#0B8043",
-        "CATEGORIES:hydrant-optimizer\\,B\\,Basil",
-        "X-HYDRANT-COURSE:B",
-        "X-HYDRANT-COLOR-NAME:Basil",
-        "X-HYDRANT-COLOR:#0B8043",
-        "X-HYDRANT-GCAL-COLOR-ID:10",
-        "Color: Basil #0B8043 (Google Calendar event colorId 10)",
-    ] {
+    for course_id in ["A", "B"] {
+        assert!(unfolded.contains(&format!("SUMMARY:{course_id} Lec\r\n")));
         assert!(
-            unfolded.contains(expected),
-            "missing {expected} in:\n{unfolded}"
+            unfolded.contains(&format!(
+                "DESCRIPTION:{course_id} title\\n{course_id} lecture Manual\r\n"
+            )),
+            "description must contain only course and section details:\n{unfolded}"
+        );
+    }
+    assert_eq!(unfolded.matches("LOCATION:Room M\r\n").count(), 2);
+    for removed in ["color", "categories:", "x-hydrant-", "google"] {
+        assert!(
+            !unfolded.to_ascii_lowercase().contains(removed),
+            "unexpected export metadata {removed}:\n{unfolded}"
         );
     }
     assert!(report.ics.split("\r\n").all(|line| line.len() <= 75));

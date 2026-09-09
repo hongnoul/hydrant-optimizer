@@ -41,6 +41,25 @@ hydrant-optimizer --offline optimize 6.1200 18.01 \
 
 Use `./target/release/hydrant-optimizer` in place of `hydrant-optimizer` unless installed on `PATH`. `cargo install --path . --locked` installs the executable locally. Subject availability depends on the downloaded term. Run `--help` and `manual --help` for the full CLI.
 
+### Live TUI development
+
+Run once in an interactive terminal from the repository:
+
+```sh
+./scripts/dev-tui.sh --offline
+# Reproducible preview without network access or an existing cache:
+./scripts/dev-tui.sh --catalog tests/fixtures/catalog.json \
+  --term tests/fixtures/term.json tui --select A --select B
+```
+
+The launcher watches `src/`, `Cargo.toml`, `Cargo.lock`, and `.cargo/` for edits (including agent edits), then automatically rebuilds and restarts the TUI. It uses incremental **debug builds**, not release builds, in `target/tui-dev`. No extra watcher package is required. Changes are polled every half-second and debounced. Rust code still needs to compile, so this is automatic rebuild/restart rather than in-process hot patching.
+
+Build diagnostics appear in the same terminal. Failed builds wait for the next edit and retry automatically. `q` exits the TUI and watcher, and Ctrl+C stops the launcher. Terminal modes and the cursor are restored on reload and exit. Arguments are forwarded unchanged on every launch. Use `--offline` after caching the catalog, or the fixture arguments above, to avoid fetching on every restart.
+
+Verify the watcher with `cargo test --locked --test dev_tui`. Add `-- --include-ignored --test-threads=1` to also exercise real Cargo rebuilds, a compiler error, and recovery in an isolated source copy.
+
+Reloads reset in-memory selections, search, scroll position, and unsaved editor input. Use `tui --select SUBJECT` (repeatable) to restore a preview selection. Saved manual entries remain in the normal data directory. Pass `--data-dir PATH` to isolate development data if desired.
+
 ### Terminal controls
 
 | Key | Action |

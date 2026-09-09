@@ -1000,6 +1000,11 @@ pub fn run(
         if event::poll(tick)? {
             match event::read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        break;
+                    }
                     let action = app.handle_key(key)?;
                     match action {
                         AppAction::None => {}

@@ -69,25 +69,61 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         area.width,
         area.height.saturating_sub(header_height),
     );
-    let paragraph = Paragraph::new(lines(app, grid.width)).wrap(Wrap { trim: false });
+    let mut sheet = lines(app, grid.width);
+    // Keep the table's own header and closing rule fixed while its half-hour
+    // body scrolls. Narrow-terminal messages use the ordinary viewport.
+    let framed = sheet
+        .first()
+        .is_some_and(|line| line.to_string().starts_with('┌'));
+    let mut body = grid;
+    if framed && grid.height >= 5 {
+        let footer = sheet.split_off(51);
+        let rows = sheet.split_off(3);
+        let footer_height = (footer.len() as u16).min(grid.height - 4);
+        frame.render_widget(
+            Paragraph::new(sheet),
+            Rect::new(grid.x, grid.y, grid.width, 3),
+        );
+        body = Rect::new(
+            grid.x,
+            grid.y + 3,
+            grid.width,
+            (grid.height - 3 - footer_height).min(rows.len() as u16),
+        );
+        frame.render_widget(
+            Paragraph::new(footer),
+            Rect::new(grid.x, body.bottom(), grid.width, footer_height),
+        );
+        sheet = rows;
+    }
+    let pinned = body != grid;
+    let paragraph = Paragraph::new(sheet).wrap(Wrap { trim: false });
     let blocks = app.session_blocks();
     let reveal_row = if app.timetable_navigation.reveal {
-        blocks
-            .get(app.timetable_navigation.block)
-            .map(|block| 3 + block.start / 30)
+        blocks.get(app.timetable_navigation.block).map(|block| {
+            if pinned {
+                block.start / 30
+            } else {
+                3 + block.start / 30
+            }
+        })
     } else {
         None
     };
     let viewport = &mut app.timetable_viewport;
-    viewport.height = grid.height;
+    if viewport.height == 0 && pinned {
+        // Open on the useful daytime range without removing overnight slots.
+        viewport.offset = 8 * 2;
+    }
+    viewport.height = body.height;
     viewport.max_offset = (paragraph.line_count(grid.width).min(u16::MAX as usize) as u16)
-        .saturating_sub(grid.height);
+        .saturating_sub(body.height);
     viewport.offset = viewport.offset.min(viewport.max_offset);
     if let Some(row) = reveal_row {
         if row < viewport.offset {
             viewport.offset = row;
-        } else if row >= viewport.offset.saturating_add(grid.height) {
-            viewport.offset = row.saturating_add(1).saturating_sub(grid.height);
+        } else if row >= viewport.offset.saturating_add(body.height) {
+            viewport.offset = row.saturating_add(1).saturating_sub(body.height);
         }
         viewport.offset = viewport.offset.min(viewport.max_offset);
         app.timetable_navigation.reveal = false;
@@ -125,7 +161,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
     frame.render_widget(
         Line::styled(
             format!(
-                "{title} {}/{} · {mode}{selection} · 30-minute rows · t focus · PgUp/Dn | {}/{}",
+                "{title} {}/{} · {mode}{selection} · hour labels · 30-minute slots · t focus · PgUp/Dn | {}/{}",
                 if count == 0 {
                     0
                 } else {
@@ -143,7 +179,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         ),
         header,
     );
-    frame.render_widget(paragraph.scroll((viewport.offset, 0)), grid);
+    frame.render_widget(paragraph.scroll((viewport.offset, 0)), body);
 }
 
 use crossterm::event::KeyCode;

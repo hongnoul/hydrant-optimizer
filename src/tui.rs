@@ -444,7 +444,7 @@ impl AppState {
             }
             KeyCode::Char('t') => {
                 self.focus = Focus::Timetable;
-                self.timetable_viewport.offset = 0;
+                self.timetable_viewport.offset = 16.min(self.timetable_viewport.max_offset);
                 Ok(AppAction::None)
             }
             KeyCode::Char('m') => {
@@ -1772,8 +1772,8 @@ mod viewport_tests {
         for day in ["Mon", "Tue", "Wed", "Thu", "Fri"] {
             assert!(screen.contains(day), "missing {day}: {screen}");
         }
-        assert!(screen.contains("00:00"));
-        assert!(screen.contains("00:30"));
+        assert!(screen.contains("08:00"));
+        assert!(screen.contains("09:00"));
         press(&mut state, KeyCode::Char('l'));
         assert!(render(&mut state, 80, 24).contains("> Selected classes"));
         press(&mut state, KeyCode::Right);
@@ -1884,17 +1884,27 @@ mod viewport_tests {
                 assert_eq!(buffer[(width - 1, 1)].symbol(), "┐");
                 assert!(rows[2].starts_with("│Time"));
                 assert_eq!(rows[2].matches('│').count(), 7, "no extra parent sides");
-                assert_eq!(state.timetable_viewport.height, height - 1);
+                assert_eq!(state.timetable_viewport.height, (height - 5).min(48));
                 assert_eq!(
                     state.timetable_viewport.max_offset,
-                    52u16.saturating_sub(height - 1)
+                    48u16.saturating_sub(height - 5)
                 );
-                if let Some(bottom) = rows.iter().position(|row| row.starts_with('└')) {
+                let bottom = rows
+                    .iter()
+                    .position(|row| row.starts_with('└'))
+                    .expect("closing rule stays visible");
+                assert!(rows[bottom].ends_with('┘'));
+                assert_eq!(rows[bottom].matches('┴').count(), 5);
+                if height == 40 {
                     assert!(
-                        rows[bottom + 1..].iter().all(|row| row.trim().is_empty()),
-                        "no legend, parent sides, or bottom border beneath the grid"
+                        rows.iter().any(|row| row.starts_with("│14:00")),
+                        "afternoon is visible without scrolling"
                     );
                 }
+                assert!(
+                    rows[bottom + 1..].iter().all(|row| row.trim().is_empty()),
+                    "no legend, parent sides, or bottom border beneath the grid"
+                );
             }
         }
     }
@@ -1912,6 +1922,7 @@ mod viewport_tests {
         render(&mut state, 80, 24);
         assert!(state.timetable_viewport.max_offset > 0);
         press(&mut state, KeyCode::Char('t'));
+        press(&mut state, KeyCode::Home);
         for key in [KeyCode::Char('j'), KeyCode::Down] {
             press(&mut state, key);
         }
@@ -1927,7 +1938,7 @@ mod viewport_tests {
         assert_eq!(timetable_offset, state.timetable_viewport.max_offset);
         assert_eq!(state.timetable_viewport.offset, timetable_offset);
         press(&mut state, KeyCode::Char('t'));
-        assert_eq!(state.timetable_viewport.offset, 0);
+        assert_eq!(state.timetable_viewport.offset, 16);
         press(&mut state, KeyCode::End);
         render(&mut state, 200, 160);
         assert_eq!(
@@ -1942,7 +1953,7 @@ mod viewport_tests {
         assert!(state.solution.is_none());
         assert_eq!(state.timetable_viewport.offset, 0);
         assert_eq!(state.timetable_viewport.max_offset, 0);
-        assert!(render(&mut state, 80, 24).contains("00:00"));
+        assert!(render(&mut state, 80, 24).contains("08:00"));
         for (width, height) in [(36, 12), (12, 5), (1, 1), (0, 0)] {
             render(&mut state, width, height);
         }

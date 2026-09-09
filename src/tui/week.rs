@@ -214,7 +214,11 @@ fn row_line(plan: &ColumnPlan, entries: &[Entry], slot_start: u16) -> Line<'stat
     let mut spans = Vec::with_capacity(DAY_COUNT * 2 + 3);
     spans.push(Span::raw("│"));
     spans.push(Span::raw(pad_cell(
-        &format_time(slot_start),
+        &if slot_start % 60 == 0 {
+            format_time(slot_start)
+        } else {
+            String::new()
+        },
         plan.time_width,
     )));
     spans.push(Span::raw("│"));
@@ -228,7 +232,7 @@ fn row_line(plan: &ColumnPlan, entries: &[Entry], slot_start: u16) -> Line<'stat
             .collect();
         let width = plan.day_widths[day];
         if occupants.is_empty() {
-            spans.push(Span::raw(pad_cell("·", width)));
+            spans.push(Span::raw(pad_cell("", width)));
         } else {
             let starts: Vec<&Entry> = occupants
                 .iter()
@@ -521,19 +525,14 @@ mod tests {
     }
 
     fn row_text(lines: &[Line<'_>], time: &str) -> String {
-        lines
-            .iter()
-            .map(text)
-            .find(|line| line.starts_with(&format!("│{time}")))
-            .unwrap_or_else(|| panic!("missing row {time}"))
+        text(&lines[row_index(lines, time)])
     }
 
     fn row_index(lines: &[Line<'_>], time: &str) -> usize {
-        lines
-            .iter()
-            .map(text)
-            .position(|line| line.starts_with(&format!("│{time}")))
-            .unwrap_or_else(|| panic!("missing row {time}"))
+        let (hour, minute) = time.split_once(':').unwrap();
+        let index = 3 + hour.parse::<usize>().unwrap() * 2 + minute.parse::<usize>().unwrap() / 30;
+        assert!(text(&lines[index]).starts_with('│'));
+        index
     }
 
     fn cell_text(row: &str, index: usize) -> &str {
@@ -621,9 +620,9 @@ mod tests {
             None,
         );
         assert!(all_text(&lines).contains("09:00"));
-        assert!(all_text(&lines).contains("09:30"));
+        assert!(!all_text(&lines).contains("09:30"));
         assert!(all_text(&lines).contains("10:00"));
-        assert!(all_text(&lines).contains("10:30"));
+        assert!(!all_text(&lines).contains("10:30"));
         assert_eq!(row_index(&lines, "09:30"), row_index(&lines, "09:00") + 1);
         assert_eq!(row_index(&lines, "10:00"), row_index(&lines, "09:30") + 1);
         assert_eq!(row_index(&lines, "10:30"), row_index(&lines, "10:00") + 1);
@@ -644,7 +643,7 @@ mod tests {
         );
         let row_1000 = row_text(&lines, "10:00");
         let row_1030 = row_text(&lines, "10:30");
-        assert_eq!(cell_text(&row_1000, 0).trim(), "·");
+        assert_eq!(cell_text(&row_1000, 0).trim(), "");
         assert!(cell_text(&row_1000, 2).contains("6.1200"));
         assert_eq!(cell_text(&row_1030, 2).trim(), "room");
         assert_eq!(
@@ -701,7 +700,7 @@ mod tests {
                 for slot in 0..48 {
                     let row = row_text(&lines, &format_time(slot * 30));
                     let expected = if slot < first_slot || slot > last_slot {
-                        "·"
+                        ""
                     } else if slot == first_slot {
                         "A Lec"
                     } else if slot == first_slot + 1 {
@@ -744,7 +743,7 @@ mod tests {
         assert_eq!(cell_text(&row_text(&lines, "09:30"), 2).trim(), "room");
         assert_eq!(cell_text(&row_text(&lines, "10:00"), 0).trim(), "");
         assert_eq!(cell_text(&row_text(&lines, "10:30"), 0).trim(), "A Lec");
-        assert_eq!(cell_text(&row_text(&lines, "11:00"), 0).trim(), "·");
+        assert_eq!(cell_text(&row_text(&lines, "11:00"), 0).trim(), "");
         assert_eq!(all_text(&lines).matches("room").count(), 2);
     }
 
@@ -1023,7 +1022,7 @@ mod tests {
         let rendered = all_text(&lines);
         assert!(rendered.contains("1 weekend meeting hidden here. Export keeps them."));
         assert!(rendered.contains("09:00"));
-        assert!(rendered.contains("23:30"));
+        assert!(rendered.contains("23:00"));
         assert!(!rendered.contains("Sat"));
         assert!(!rendered.contains("Sun"));
     }
@@ -1041,7 +1040,7 @@ mod tests {
         let rendered = all_text(&lines);
         assert!(rendered.contains("2 weekend meetings hidden here. Export keeps them."));
         assert!(rendered.contains("│10:00"));
-        assert!(rendered.contains("│23:30"));
+        assert!(rendered.contains("│23:00"));
         assert!(rendered.contains("┌"));
         assert!(!rendered.contains("Lec="));
     }
@@ -1145,7 +1144,7 @@ mod tests {
         let lines = week_lines(&[], 78, None);
         let rendered = all_text(&lines);
         assert!(rendered.contains("00:00"));
-        assert!(rendered.contains("23:30"));
+        assert!(rendered.contains("23:00"));
         assert_eq!(lines.len(), 52);
         assert!(lines.iter().all(|line| line.width() <= 78));
     }

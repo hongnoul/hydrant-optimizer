@@ -153,19 +153,29 @@ fn cli(dir: &Path, args: &[&str]) -> Value {
 }
 
 fn week_row(screen: &str, time: &str) -> Option<Vec<String>> {
-    screen
-        .lines()
-        .find(|line| line.split('│').any(|cell| cell.trim() == time))
-        .map(|line| {
-            line.trim()
-                .strip_prefix('│')
-                .and_then(|row| row.strip_suffix('│'))
-                .expect("weekday rows have left and right borders")
-                .split('│')
-                .map(str::trim)
-                .map(str::to_owned)
-                .collect()
-        })
+    let half_hour = time.ends_with(":30");
+    let label = if half_hour {
+        time.replace(":30", ":00")
+    } else {
+        time.to_owned()
+    };
+    let mut rows = screen.lines();
+    let found = rows.find(|line| line.split('│').any(|cell| cell.trim() == label));
+    (if half_hour {
+        found.and_then(|_| rows.next())
+    } else {
+        found
+    })
+    .map(|line| {
+        line.trim()
+            .strip_prefix('│')
+            .and_then(|row| row.strip_suffix('│'))
+            .expect("weekday rows have left and right borders")
+            .split('│')
+            .map(str::trim)
+            .map(str::to_owned)
+            .collect()
+    })
 }
 
 // Read a rendered pane without its focus-dependent title or border. Keeping the
@@ -609,7 +619,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     let headers = week_row(&screen, "Time").unwrap();
     assert_eq!(headers, ["Time", "Mon", "Tue", "Wed", "Thu", "Fri"]);
     let row_times: Vec<_> = (0..1440)
-        .step_by(30)
+        .step_by(60)
         .map(|minute| format!("{:02}:{:02}", minute / 60, minute % 60))
         .collect();
     let observed_times: Vec<_> = screen
@@ -620,11 +630,11 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         .collect();
     assert_eq!(
         observed_times, row_times,
-        "the actual terminal must contain exactly the expected 30-minute rows"
+        "the actual terminal must contain exactly the expected hourly labels"
     );
     let first = week_row(&screen, "09:00").unwrap();
     assert!(first[1].contains("2×") && first[1].contains('W') && first[1].contains('X'));
-    assert!(first[2..].iter().all(|cell| cell == "·"));
+    assert!(first[2..].iter().all(|cell| cell.is_empty()));
     for (time, day) in [("09:30", 2), ("10:00", 3), ("10:30", 4), ("11:00", 5)] {
         assert_eq!(
             week_row(&screen, time).unwrap()[day],
@@ -639,7 +649,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     );
     assert_eq!(
         week_row(&screen, "10:30").unwrap()[2],
-        "·",
+        "",
         "end boundary must not occupy another bucket"
     );
     assert!(!screen.contains("Legend:"));
@@ -652,6 +662,58 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         "only Tuesday spans two rows, so all one-row meetings must omit rooms"
     );
     assert!(!timetable.contains("Bucket room"));
+    println!(
+        "UX_OBSERVATION {}",
+        serde_json::json!({
+            "requirement": "session_room_row",
+            "meeting": "Tue 09:35-10:05",
+            "first_row": week_row(&screen, "09:30").unwrap()[2],
+            "second_row": week_row(&screen, "10:00").unwrap()[2],
+            "after_end": week_row(&screen, "10:30").unwrap()[2],
+            "room_occurrences": timetable.matches(initial_room).count(),
+            "one_row_room_occurrences": timetable.matches("Bucket room").count(),
+        })
+    );
+    // Optional actual-executable comparison, independent of renderer test helpers.
+    if let Ok(binary) = std::env::var("HYDRANT_ROOM_BASELINE_BIN") {
+        let mut old = Driver::with_binary(
+            &binary,
+            dir,
+            &dir.join("room-baseline-unused.ics"),
+            110,
+            120,
+            &args,
+        );
+        old.marker("Optimal: 7 occupied day(s), 0 gap minute(s).");
+        old.send(b"t");
+        old.until("baseline room row visible", |s| {
+            s.contains("> Timetable") && week_row(s, "11:00").is_some()
+        });
+        let before = old.screen.screen().contents();
+        let before_legend = week_row(&before, "09:30").unwrap()[2].clone();
+        let before_room = week_row(&before, "10:00").unwrap()[2].clone();
+        assert_eq!(before_legend, "W Lec");
+        assert_eq!(before_room, "");
+        assert_eq!(week_row(&screen, "09:30").unwrap()[2], before_legend);
+        assert!(!pane_contents(&before, "Timetable").contains("Bucket room"));
+        old.send(b"q");
+        old.marker("TERMINAL_RESTORED");
+        assert!(old.child.wait().unwrap().success());
+        println!(
+            "UX_COMPARISON {}",
+            serde_json::json!({
+                "requirement": "session_room_row",
+                "before": {"first_row": before_legend, "second_row": before_room},
+                "after": {
+                    "first_row": week_row(&screen, "09:30").unwrap()[2],
+                    "second_row": week_row(&screen, "10:00").unwrap()[2],
+                },
+                "same_fixture_and_terminal_size": true,
+                "one_row_rooms_hidden_in_both": true,
+                "baseline_terminal_restored": true,
+            })
+        );
+    }
     for title in ["Subjects", "Selected"] {
         assert!(week_row(&pane_contents(&screen, title), "Time").is_none());
     }
@@ -700,6 +762,15 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     let switched = ui.screen.screen().contents();
     assert_eq!(week_row(&switched, "10:00").unwrap()[2], next_room);
     assert!(!pane_contents(&switched, "Timetable").contains(initial_room));
+    println!(
+        "UX_OBSERVATION {}",
+        serde_json::json!({
+            "requirement": "session_room_switch",
+            "before": week_row(&screen, "10:00").unwrap()[2],
+            "after": week_row(&switched, "10:00").unwrap()[2],
+            "stale_room_occurrences": pane_contents(&switched, "Timetable").matches(initial_room).count(),
+        })
+    );
     ui.send(b"e");
     ui.marker("Exported");
     let calendar = fs::read_to_string(&output).unwrap();
@@ -968,7 +1039,7 @@ fn actual_tui_timetable_scrolls_and_resets_independently_of_subject_lists() {
     let subjects_top = pane_contents(&screen, "Subjects");
     let selected_top = pane_contents(&screen, "Selected");
     let timetable_top = pane_contents(&screen, "Timetable");
-    assert!(week_row(&timetable_top, "00:00").is_some());
+    assert!(week_row(&timetable_top, "08:00").is_some());
 
     for (down, up) in [
         (b"j".as_slice(), b"k".as_slice()),
@@ -1000,8 +1071,8 @@ fn actual_tui_timetable_scrolls_and_resets_independently_of_subject_lists() {
     assert_eq!(pane_contents(&screen, "Subjects"), subjects_top);
     assert_eq!(pane_contents(&screen, "Selected"), selected_top);
     ui.send(b"\x1b[H");
-    ui.until("Timetable Home resets only timetable", |s| {
-        pane_contents(s, "Timetable") == timetable_top
+    ui.until("Timetable Home reveals overnight hours", |s| {
+        week_row(&pane_contents(s, "Timetable"), "00:00").is_some()
     });
     ui.send(b"\x1b[F");
     ui.until("Timetable End restores last page", |s| {
@@ -1150,7 +1221,7 @@ fn actual_tui_80x24_navigates_sessions_and_exports_with_unknown_subjects() {
     ui.send(b"t");
     ui.until("weekday 30-minute grid", |s| {
         s.contains("> Timetable")
-            && ["Mon", "Tue", "Wed", "Thu", "Fri", "00:00", "00:30"]
+            && ["Mon", "Tue", "Wed", "Thu", "Fri", "08:00", "09:00"]
                 .iter()
                 .all(|label| s.contains(label))
     });

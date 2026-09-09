@@ -35,7 +35,7 @@ use crate::{app, model::*, storage};
 mod timetable;
 mod week;
 
-pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, j/k or Down/Up move/scroll within pane, h/l or Left/Right previous/next pane, Space select/remove class, Tab next panel/field, s selected classes, m manual overlay, a add manual, Enter select/remove/edit, x enable-disable manual, o optimize/cancel, c cancel, t timetable, PgUp/PgDn scroll active pane, Home/End first/last line, e export, ? help, Ctrl+S save editor";
+pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, j/k or Down/Up move/scroll within pane, h/l or Left/Right previous/next pane, Space select/remove class, Tab next panel/field, s selected classes, m manual overlay, a add manual, Enter select/remove/edit, x enable-disable manual, o optimize/cancel, c cancel, t timetable (h/l alternatives, Enter blocks, hjkl move, Enter then h/l same-time member, Esc back), PgUp/PgDn scroll active pane, Home/End first/last line, e export, ? help, Ctrl+S save editor";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
@@ -220,6 +220,7 @@ pub struct AppState {
     pub manual_cursor: usize,
     pub result_cursor: usize,
     timetable_viewport: ScrollViewport,
+    timetable_navigation: timetable::Navigation,
     pub editor: Option<ManualForm>,
     pub solution: Option<Solution>,
     pub actual_members: BTreeMap<String, String>,
@@ -270,6 +271,7 @@ impl AppState {
             manual_cursor: 0,
             result_cursor: 0,
             timetable_viewport: ScrollViewport::default(),
+            timetable_navigation: timetable::Navigation::default(),
             editor: None,
             solution: None,
             actual_members: BTreeMap::new(),
@@ -348,6 +350,10 @@ impl AppState {
 
         if self.focus == Focus::Search {
             return self.handle_search_key(key);
+        }
+
+        if self.focus == Focus::Timetable && self.handle_timetable_key(key.code) {
+            return Ok(AppAction::None);
         }
 
         match key.code {
@@ -802,6 +808,7 @@ impl AppState {
     pub fn install_solution(&mut self, solution: Solution) {
         self.result_cursor = 0;
         self.timetable_viewport = ScrollViewport::default();
+        self.timetable_navigation = timetable::Navigation::default();
         self.actual_members.clear();
         self.export = None;
         self.optimize_running = false;
@@ -882,6 +889,7 @@ impl AppState {
     fn invalidate(&mut self, message: &str) {
         self.generation = self.generation.wrapping_add(1);
         self.timetable_viewport = ScrollViewport::default();
+        self.timetable_navigation = timetable::Navigation::default();
         self.solution = None;
         self.actual_members.clear();
         self.export = None;
@@ -1363,7 +1371,7 @@ fn draw_footer(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
         Line::from(if app.focus == Focus::Manual {
             "Enter edit | a add | x toggle | Esc/m close manual entries"
         } else if app.focus == Focus::Timetable {
-            "h/l ←/→ panes | j/k/PgUp/Dn scroll | Home/End | m manual | q quit"
+            app.timetable_navigation.hint()
         } else {
             "h/l ←/→ panes | j/k ↑/↓ move | Space select/remove | m manual | q quit"
         }),
@@ -1400,6 +1408,9 @@ fn draw_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from("s / t              Focus selected classes / timetable."),
         Line::from("PgUp/PgDn          Scroll the timetable."),
         Line::from("Home/End           First/last line in the timetable."),
+        Line::from(
+            "Timetable: h/l choices, Enter blocks, hjkl move, Enter members, h/l switch, Esc back.",
+        ),
         Line::from("e                  Export chosen sections to a new local ICS file."),
         Line::from("q / Esc            Quit. Esc closes search, help, or an editor first."),
         Line::from(""),

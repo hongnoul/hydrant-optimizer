@@ -51,10 +51,20 @@ struct EntrySet {
     weekend_count: usize,
 }
 
+#[cfg(test)]
 pub(super) fn week_lines(
     sections: &[ChosenSection],
     width: u16,
     selected_requirement: Option<&str>,
+) -> Vec<Line<'static>> {
+    week_lines_focused(sections, width, selected_requirement, None)
+}
+
+pub(super) fn week_lines_focused(
+    sections: &[ChosenSection],
+    width: u16,
+    selected_requirement: Option<&str>,
+    selected_block: Option<(u8, u16, u16)>,
 ) -> Vec<Line<'static>> {
     let width = width as usize;
     if width == 0 {
@@ -62,7 +72,12 @@ pub(super) fn week_lines(
     }
 
     let mut lines = Vec::new();
-    let entry_set = entries_from_sections(sections, selected_requirement);
+    let mut entry_set = entries_from_sections(sections, selected_requirement);
+    if let Some((day, start, end)) = selected_block {
+        for entry in &mut entry_set.weekdays {
+            entry.selected &= entry.day == day as usize && entry.start == start && entry.end == end;
+        }
+    }
     if entry_set.weekdays.is_empty() {
         if entry_set.weekend_count > 0 {
             lines.push(plain_line(
@@ -520,6 +535,25 @@ mod tests {
 
     fn cell_text(row: &str, index: usize) -> &str {
         row.split('│').nth(index + 2).unwrap()
+    }
+
+    #[test]
+    fn focused_block_highlights_only_one_occurrence() {
+        let sections = [section(
+            "A",
+            "lecture",
+            "L1",
+            vec![meeting(0, 540, 600), meeting(2, 540, 600)],
+        )];
+        let lines = week_lines_focused(&sections, 100, Some("A/lecture"), Some((2, 540, 600)));
+        let row = &lines[row_index(&lines, "09:00")];
+        let selected: Vec<_> = row
+            .spans
+            .iter()
+            .filter(|span| span.style.bg == Some(Color::Yellow))
+            .collect();
+        assert_eq!(selected.len(), 1);
+        assert!(selected[0].content.contains("A Lec"));
     }
 
     #[test]

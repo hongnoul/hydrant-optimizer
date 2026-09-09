@@ -190,6 +190,8 @@ fn manual_editor_saves_atomic_meeting_bundle_with_dates_and_toggle_invalidates()
     let before = state.generation;
     state.focus = Focus::Manual;
     state.install_solution(Solution {
+        alternatives: Vec::new(),
+        alternatives_truncated: false,
         status: SolveStatus::OptimalKnown,
         choices: Vec::new(),
         score: Some(Score {
@@ -254,6 +256,8 @@ fn same_time_member_switching_updates_mapping_and_selection_invalidates_result()
     let mut state = state(&temp, Vec::new());
     let meetings = vec![meeting(0, 9 * 60, 10 * 60)];
     state.install_solution(Solution {
+        alternatives: Vec::new(),
+        alternatives_truncated: false,
         status: SolveStatus::OptimalKnown,
         choices: vec![TimeChoice {
             id: "A-L1".to_string(),
@@ -323,6 +327,8 @@ fn vim_and_arrow_navigation_are_equivalent_in_every_pane() {
         )],
     });
     state.install_solution(Solution {
+        alternatives: Vec::new(),
+        alternatives_truncated: false,
         status: SolveStatus::OptimalKnown,
         choices: choices.into(),
         score: Some(Score {

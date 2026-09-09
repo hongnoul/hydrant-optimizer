@@ -49,7 +49,7 @@ fn lines(app: &AppState, width: u16) -> Vec<Line<'static>> {
     vec![Line::from(if app.optimize_running {
         "Optimizing. The timetable will appear here."
     } else {
-        "No timetable yet. Select classes and press o."
+        "No timetable yet. Select classes to optimize automatically."
     })]
 }
 

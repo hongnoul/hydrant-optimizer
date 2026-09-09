@@ -276,8 +276,6 @@ fn actual_tui_keeps_container_borders_visible_through_pane_resizes() {
             "B",
         ],
     );
-    ui.marker("Preselected 2 subject(s)");
-    ui.send(b"o");
     ui.marker("Optimal:");
     for (cols, rows) in [(107, 61), (80, 24), (53, 24), (170, 55), (107, 61)] {
         ui.resize(rows, cols);
@@ -344,7 +342,7 @@ fn actual_tui_pe_search_selection_labels_and_bounded_export() {
             "A",
         ],
     );
-    ui.marker("Preselected 1 subject(s)");
+    ui.marker("Optimal:");
     ui.send(b"/swimming\r");
     ui.marker("> [ ] PE.1000.Q1");
     ui.send(b"\r");
@@ -356,7 +354,7 @@ fn actual_tui_pe_search_selection_labels_and_bounded_export() {
             .contains("PE.1000.Q1 Swimming")
     );
     ui.send(b"a");
-    ui.marker("Manual editor opened for PE.1000.Q1");
+    ui.marker("Add manual entry");
     ui.until("published PE dates in editor fields", |screen| {
         [("Start date", "2026-10-26"), ("End date", "2026-10-30")]
             .iter()
@@ -370,8 +368,6 @@ fn actual_tui_pe_search_selection_labels_and_bounded_export() {
     ui.until("manual editor cancelled", |screen| {
         !screen.contains("Add manual entry")
     });
-    ui.send(b"o");
-    ui.marker("Optimal:");
     ui.send(b"t");
     ui.until("all academic and PE component labels", |screen| {
         screen.contains("> Timetable") && week_row(screen, "11:00").is_some()
@@ -470,7 +466,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     args.extend(["tui", "--select", "W", "--select", "X"]);
     let output = dir.join("week.ics");
     let mut ui = Driver::with_size(dir, &output, 72, 120, &args);
-    ui.marker("Preselected 2 subject(s)");
+    ui.marker("Optimal:");
     ui.send(b"/week\r");
     ui.until("query visible in top search bar", |s| {
         let header = s.lines().take(3).collect::<String>();
@@ -491,7 +487,6 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         "UX_OBSERVATION {}",
         serde_json::json!({"requirement":"top_search", "query":"week", "in_top_three_rows":true, "old_status_header":false, "selection_retained":2})
     );
-    ui.send(b"o");
     ui.marker("Optimal: 7 occupied day(s), 0 gap minute(s).");
     ui.send(b"t");
     ui.until("weekday grid with weekend disclosure", |s| {
@@ -702,7 +697,7 @@ fn actual_tui_selected_classes_survive_search_and_support_remove_reselect() {
             "B",
         ],
     );
-    ui.marker("Preselected 2 subject(s)");
+    ui.marker("Optimal:");
     assert!(!ui.screen.screen().contents().contains("Manual entries"));
     assert_three_pane_ui(&ui.screen.screen().contents());
     assert_removed_shortcuts_ignored(&mut ui);
@@ -749,6 +744,7 @@ fn actual_tui_selected_classes_survive_search_and_support_remove_reselect() {
     let screen = ui.screen.screen().contents();
     assert!(pane_contents(&screen, "Selected").contains("Algorithms"));
     assert!(pane_contents(&screen, "Subjects").contains("[ ] B"));
+    ui.marker("Optimal:");
     // A is hidden by the Biology search. Enter must still remove A, not B.
     ui.send(b"\r");
     ui.until("Enter removes remaining hidden-by-search A", |s| {
@@ -765,6 +761,7 @@ fn actual_tui_selected_classes_survive_search_and_support_remove_reselect() {
     ui.until("reselect A after changing search", |s| {
         s.contains("Selected classes | 2") && s.contains("> [x] A")
     });
+    ui.marker("Optimal:");
     ui.send(b"s");
     ui.marker("> Selected");
     let selected = pane_contents(&ui.screen.screen().contents(), "Selected");
@@ -843,8 +840,7 @@ fn actual_tui_timetable_scrolls_and_resets_independently_of_subject_lists() {
         args.extend(["--select", id]);
     }
     let mut ui = Driver::with_size(dir, &dir.join("scroll-unused.ics"), 24, 100, &args);
-    ui.marker("Preselected 11 subject(s)");
-    ui.send(b"o");
+    ui.marker("Optimal:");
     ui.marker("Optimal: 1 occupied day(s), 0 gap minute(s).");
     ui.send(b"t");
     ui.marker("> Timetable");
@@ -983,7 +979,7 @@ fn actual_tui_80x24_navigates_sessions_and_exports_with_unknown_subjects() {
     }
     let output = dir.join("small.ics");
     let mut ui = Driver::with_size(dir, &output, 24, 80, &args);
-    ui.marker("Preselected 12 subject(s)");
+    ui.marker("Optimal:");
     let header = ui
         .screen
         .screen()
@@ -1031,7 +1027,6 @@ fn actual_tui_80x24_navigates_sessions_and_exports_with_unknown_subjects() {
             .contains("results")
     );
     ui.send(b"?");
-    ui.send(b"o");
     ui.marker("Optimal: 1 occupied day(s), 0 gap minute(s).");
     ui.send(b"t");
     ui.until("weekday 30-minute grid", |s| {
@@ -1150,7 +1145,7 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
     ui.send(b"/\x1518.01\r ");
     ui.until("second subject selection", |s| s.contains("18.01"));
     ui.send(b"a");
-    ui.marker("Manual editor opened for");
+    ui.marker("Add manual entry");
     let fields = [
         "6.1200",
         "lecture",
@@ -1170,14 +1165,13 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
     }
     edit.push(b'\r');
     ui.send(&edit);
-    ui.marker("Manual entries saved. Press o to re-optimize.");
+    ui.marker("Optimal:");
     let stored: Value =
         serde_json::from_slice(&fs::read(dir.join("manual.json")).unwrap()).unwrap();
     assert_eq!(
         stored["entries"][0]["option"]["label"],
         "PTY acceptance alternative"
     );
-    ui.send(b"o");
     ui.marker("Optimal:");
     let expected = format!(
         "Optimal: {} occupied day(s), {} gap minute(s).",
@@ -1261,18 +1255,18 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
 
     // Exercise review fixes through real keyboard input, not just AppState helpers.
     ui.send(b"mx");
-    ui.marker("Disabled");
+    ui.marker("Optimal:");
     let disabled: Value =
         serde_json::from_slice(&fs::read(dir.join("manual.json")).unwrap()).unwrap();
     assert_eq!(disabled["entries"][0]["enabled"], false);
     ui.send(b"e");
-    ui.marker("optimize before exporting");
+    ui.marker("Export failed:");
     assert_eq!(fs::read_to_string(&output).unwrap(), calendar);
 
     ui.send(b"\r");
     ui.marker("Edit manual entry");
     ui.send(b"\t\t\x15Edited while disabled\r");
-    ui.marker("Manual entries saved. Press o to re-optimize.");
+    ui.marker("Optimal:");
     let saved_bytes = fs::read(dir.join("manual.json")).unwrap();
     let edited: Value = serde_json::from_slice(&saved_bytes).unwrap();
     assert_eq!(edited["entries"][0]["enabled"], false);
@@ -1295,8 +1289,7 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
         !screen.contains("Edit manual entry")
     });
     ui.send(b"x");
-    ui.marker("Enabled");
-    ui.send(b"o");
+    ui.marker("Optimal:");
     ui.marker(&expected);
 
     ui.send(b"/\x15mathematics for\r");
@@ -1390,8 +1383,8 @@ fn actual_tui_nested_navigation_cycles_optima_blocks_and_fixed_time_members() {
     let mut args = source.to_vec();
     args.extend(["tui", "--select", "N"]);
     let mut ui = Driver::with_size(dir, &output, 40, 140, &args);
-    ui.marker("Preselected 1 subject(s)");
-    ui.send(b"ot");
+    ui.marker("Optimal:");
+    ui.send(b"t");
     ui.marker("> Timetable 1/2");
     for (key, expected) in [
         (b"l".as_slice(), "2/2"),

@@ -35,7 +35,7 @@ use crate::{app, model::*, storage};
 mod timetable;
 mod week;
 
-pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, j/k or Down/Up move/scroll within pane, h/l or Left/Right previous/next pane, Space select/remove class, Tab next panel/field, s selected classes, m manual overlay, a add manual, Enter select/remove/edit, x enable-disable manual, o optimize/cancel, c cancel, t timetable (h/l alternatives, Enter blocks, hjkl move, Enter then h/l same-time member, Esc back), PgUp/PgDn scroll active pane, Home/End first/last line, e export, ? help, Ctrl+S save editor";
+pub const KEYMAP: &str = "q/Esc quit, / search, Ctrl+U clear search, j/k or Down/Up move/scroll within pane, h/l or Left/Right previous/next pane, Space select/remove class, Tab next panel/field, s selected classes, m manual overlay, a add manual, Enter select/remove/edit, x enable-disable manual, c cancel, t timetable (h/l alternatives, Enter blocks, hjkl move, Enter then h/l same-time member, Esc back), PgUp/PgDn scroll active pane, Home/End first/last line, e export, ? help, Ctrl+S save editor";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
@@ -181,7 +181,6 @@ pub struct ExportSummary {
 pub enum AppAction {
     None,
     Quit,
-    OptimizeOrCancel,
     CancelOptimize,
     Export,
     SaveManual,
@@ -287,7 +286,7 @@ impl AppState {
             state.status = format!("Unknown initial subject(s): {}", unknown.join(", "));
         } else if !state.selected.is_empty() {
             state.status = format!(
-                "Preselected {} subject(s). Press o to optimize.",
+                "Preselected {} subject(s). Optimizing automatically.",
                 state.selected.len()
             );
         }
@@ -437,7 +436,6 @@ impl AppState {
                 }
                 Focus::Search | Focus::Timetable => Ok(AppAction::None),
             },
-            KeyCode::Char('o') => Ok(AppAction::OptimizeOrCancel),
             KeyCode::Char('c') => Ok(AppAction::CancelOptimize),
             KeyCode::Char('e') => Ok(AppAction::Export),
             KeyCode::Char('s') => {
@@ -623,7 +621,7 @@ impl AppState {
         if !self.selected.insert(id.clone()) {
             self.selected.remove(&id);
         }
-        self.invalidate("Selection changed. Press o to optimize.");
+        self.invalidate("Selection changed. Optimizing automatically.");
     }
 
     pub fn current_selected(&self) -> Option<&str> {
@@ -636,7 +634,7 @@ impl AppState {
     fn remove_current_selected(&mut self) {
         if let Some(id) = self.current_selected().map(str::to_owned) {
             self.selected.remove(&id);
-            self.invalidate("Selection changed. Press o to optimize.");
+            self.invalidate("Selection changed. Optimizing automatically.");
         }
     }
 
@@ -775,7 +773,7 @@ impl AppState {
         self.dataset = dataset;
         self.editor = None;
         self.clamp_cursors();
-        self.invalidate("Manual entries saved. Press o to re-optimize.");
+        self.invalidate("Manual entries saved. Optimizing automatically.");
         Ok(())
     }
 
@@ -797,9 +795,9 @@ impl AppState {
         self.manual = manual;
         self.dataset = dataset;
         self.invalidate(if enabled {
-            "Manual entry enabled. Press o to re-optimize."
+            "Manual entry enabled. Optimizing automatically."
         } else {
-            "Manual entry disabled. Press o to re-optimize."
+            "Manual entry disabled. Optimizing automatically."
         });
         self.status = format!("{} {id}", if enabled { "Enabled" } else { "Disabled" });
         Ok(())
@@ -989,8 +987,10 @@ pub fn run(
     let mut terminal = TerminalSession::enter()?;
     let mut worker: Option<OptimizeWorker> = None;
     let tick = Duration::from_millis(100);
+    let mut optimized_generation = None;
 
     loop {
+        optimize_changed_selection(&mut app, &mut worker, &mut optimized_generation);
         drain_worker(&mut app, &mut worker);
         terminal.terminal.draw(|frame| draw(frame, &mut app))?;
         if app.should_quit {
@@ -1000,23 +1000,10 @@ pub fn run(
         if event::poll(tick)? {
             match event::read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    let before_generation = app.generation;
                     let action = app.handle_key(key)?;
-                    if app.generation != before_generation {
-                        cancel_worker(&mut worker);
-                    }
                     match action {
                         AppAction::None => {}
                         AppAction::Quit => break,
-                        AppAction::OptimizeOrCancel => {
-                            if worker.is_some() {
-                                cancel_worker(&mut worker);
-                                app.optimize_running = false;
-                                app.status = "Cancellation requested.".to_string();
-                            } else {
-                                start_worker(&mut app, &mut worker);
-                            }
-                        }
                         AppAction::CancelOptimize => {
                             cancel_worker(&mut worker);
                             app.optimize_running = false;
@@ -1034,16 +1021,10 @@ pub fn run(
                                 }
                                 app.status = format!("Manual save failed: {error:#}");
                             }
-                            if app.generation != before_generation {
-                                cancel_worker(&mut worker);
-                            }
                         }
                         AppAction::ToggleManualEnabled => {
                             if let Err(error) = app.toggle_current_manual_enabled() {
                                 app.status = format!("Manual toggle failed: {error:#}");
-                            }
-                            if app.generation != before_generation {
-                                cancel_worker(&mut worker);
                             }
                         }
                     }
@@ -1056,6 +1037,24 @@ pub fn run(
 
     cancel_worker(&mut worker);
     Ok(())
+}
+
+// Each generation is attempted once, so cancellation or errors do not restart it.
+fn optimize_changed_selection(
+    app: &mut AppState,
+    worker: &mut Option<OptimizeWorker>,
+    optimized_generation: &mut Option<u64>,
+) {
+    if *optimized_generation == Some(app.generation) {
+        return;
+    }
+    *optimized_generation = Some(app.generation);
+    cancel_worker(worker);
+    if !app.selected.is_empty() {
+        start_worker(app, worker);
+    } else if app.generation != 0 {
+        app.status = "No classes selected. Select classes to optimize automatically.".into();
+    }
 }
 
 fn start_worker(app: &mut AppState, worker: &mut Option<OptimizeWorker>) {
@@ -1073,7 +1072,7 @@ fn start_worker(app: &mut AppState, worker: &mut Option<OptimizeWorker>) {
     app.optimize_running = true;
     app.solution = None;
     app.export = None;
-    app.status = "Optimizing in background. Press o or c to cancel.".to_string();
+    app.status = "Optimizing in background. Press c to cancel.".to_string();
 }
 
 fn cancel_worker(worker: &mut Option<OptimizeWorker>) {
@@ -1372,7 +1371,7 @@ fn draw_manual(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
 fn draw_footer(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     let text = vec![
         Line::from(app.status.clone()),
-        Line::from("/ search  s selected  o optimize  t timetable  e export  ? help"),
+        Line::from("/ search  s selected  c cancel  t timetable  e export  ? help"),
         Line::from(if app.focus == Focus::Manual {
             "Enter edit | a add | x toggle | Esc/m close manual entries"
         } else if app.focus == Focus::Timetable {
@@ -1409,7 +1408,7 @@ fn draw_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from("Space or Enter     Select a subject / remove a selected class."),
         Line::from("a / m              Add manual section / manual overlay (Esc closes)."),
         Line::from("Enter / x          Edit / enable-disable the selected manual entry."),
-        Line::from("o / c              Optimize / cancel background optimization."),
+        Line::from("c                  Cancel background optimization."),
         Line::from("s / t              Focus selected classes / timetable."),
         Line::from("PgUp/PgDn          Scroll the timetable."),
         Line::from("Home/End           First/last line in the timetable."),
@@ -1421,7 +1420,7 @@ fn draw_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from(""),
         Line::from("Editor: Tab fields, Ctrl+U clear, Enter/Ctrl+S save, Esc cancel."),
         Line::from("Meetings: Mon 09:00-10:00;Wed 09:00-10:00. Exact minutes are kept."),
-        Line::from("Selection or manual edits clear the old optimization/export result."),
+        Line::from("Selection or manual edits automatically re-optimize the timetable."),
         Line::from("Press ? or Esc to close help."),
     ];
     frame.render_widget(
@@ -1623,6 +1622,62 @@ mod viewport_tests {
         state
             .handle_key(KeyEvent::new(code, KeyModifiers::NONE))
             .unwrap();
+    }
+
+    #[test]
+    fn automatic_optimization_tracks_changes_and_respects_cancellation() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(temp.path());
+        let mut worker = None;
+        let mut generation = None;
+        optimize_changed_selection(&mut state, &mut worker, &mut generation);
+        assert!(
+            state.optimize_running,
+            "preselected classes optimize on startup"
+        );
+        let old_cancel = Arc::clone(&worker.as_ref().unwrap().cancel);
+        state.focus = Focus::Selected;
+        press(&mut state, KeyCode::Enter);
+        optimize_changed_selection(&mut state, &mut worker, &mut generation);
+        assert!(old_cancel.load(Ordering::Relaxed));
+        assert_eq!(worker.as_ref().unwrap().generation, state.generation);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while worker.is_some() {
+            assert!(std::time::Instant::now() < deadline);
+            drain_worker(&mut state, &mut worker);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            state.solution.as_ref().unwrap().status,
+            SolveStatus::OptimalKnown
+        );
+        assert_eq!(state.selected.len(), 1);
+        assert_eq!(
+            state
+                .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE))
+                .unwrap(),
+            AppAction::None
+        );
+        press(&mut state, KeyCode::Char(' '));
+        optimize_changed_selection(&mut state, &mut worker, &mut generation);
+        assert!(state.selected.is_empty());
+        assert!(state.solution.is_none());
+        assert!(worker.is_none());
+        assert!(!state.optimize_running);
+        state.focus = Focus::Subjects;
+        press(&mut state, KeyCode::Char(' '));
+        optimize_changed_selection(&mut state, &mut worker, &mut generation);
+        assert!(worker.is_some(), "adding a class starts optimization");
+        cancel_worker(&mut worker);
+        state.optimize_running = false;
+        optimize_changed_selection(&mut state, &mut worker, &mut generation);
+        assert!(worker.is_none(), "cancelled generation must not restart");
+        state.open_add_manual();
+        state.editor.as_mut().unwrap().meetings = "Mon 09:00-10:00".into();
+        state.save_current_manual().unwrap();
+        optimize_changed_selection(&mut state, &mut worker, &mut generation);
+        assert!(worker.is_some(), "manual changes trigger optimization");
+        cancel_worker(&mut worker);
     }
 
     #[test]

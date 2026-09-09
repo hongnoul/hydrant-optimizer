@@ -52,7 +52,6 @@ Use `./target/release/hydrant-optimizer` in place of `hydrant-optimizer` unless 
 | `s` | Focus Selected classes. This list stays visible independently of the search filter. |
 | `a` / `m` | Add a manual section for the highlighted class / open retained manual entries in an overlay. Escape or `m` closes the overlay. |
 | Enter / `x` in Manual | Edit an entry / toggle enabled state. |
-| `o` | Optimize in the background, or cancel an already running search. |
 | `c` | Cancel a running search. No optimum is claimed for cancelled work. |
 | `t` | Focus Timetable and reset its scroll position. |
 | Enter in Timetable | Navigate blocks, then same-time members. Use h/l to switch members and Escape to go back. |
@@ -61,7 +60,7 @@ Use `./target/release/hydrant-optimizer` in place of `hydrant-optimizer` unless 
 | `e` | Export the chosen sections to `--output`. |
 | `?` / `q` | Help / quit. Escape closes search, help, an editor, or the manual overlay first. Otherwise it quits. |
 
-The manual editor's fields are Subject, Component, Section label, Meetings, Room, Start date, End date. Tab/Shift+Tab changes fields, Ctrl+U clears one, Enter or Ctrl+S saves, and Escape cancels. Enter multiple meetings separated by semicolons. Selection survives catalog searches. Selection or manual changes invalidate the previous timetable until re-optimization.
+The manual editor's fields are Subject, Component, Section label, Meetings, Room, Start date, End date. Tab/Shift+Tab changes fields, Ctrl+U clears one, Enter or Ctrl+S saves, and Escape cancels. Enter multiple meetings separated by semicolons. Selection survives catalog searches. Selection or manual changes automatically optimize the timetable in the background, cancelling any outdated run. Preselected subjects are optimized on startup.
 
 The top search bar replaces the old status panel. Navigation letters remain ordinary text while searching or editing. Action feedback stays in the footer.
 

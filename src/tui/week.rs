@@ -97,7 +97,7 @@ pub(super) fn week_lines_focused(
 
     let Some(plan) = ColumnPlan::new(width) else {
         lines.push(plain_line(
-            "Width too small for the weekday table. Exact meeting times appear in Results.",
+            "Width too small for the weekday table. Widen the terminal to view meetings.",
             width,
         ));
         if entry_set.weekend_count > 0 {
@@ -390,7 +390,7 @@ fn fit_component_text(prefix: &str, subject: &str, component: &str, width: usize
 
 fn weekend_disclosure(count: usize) -> String {
     let meeting = if count == 1 { "meeting" } else { "meetings" };
-    format!("{count} weekend {meeting} hidden here. See Results. Export keeps them.")
+    format!("{count} weekend {meeting} hidden here. Export keeps them.")
 }
 
 fn occupant_style(occupants: &[&Entry]) -> Style {
@@ -817,7 +817,7 @@ mod tests {
         );
         let rendered = all_text(&lines);
         assert!(
-            rendered.contains("1 weekend meeting hidden here. See Results. Export keeps them.")
+            rendered.contains("1 weekend meeting hidden here. Export keeps them.")
         );
         assert!(rendered.contains("09:00"));
         assert!(!rendered.contains("23:30"));
@@ -838,7 +838,7 @@ mod tests {
         let rendered = all_text(&lines);
         assert!(rendered.contains("no Monday-Friday meetings"));
         assert!(
-            rendered.contains("2 weekend meetings hidden here. See Results. Export keeps them.")
+            rendered.contains("2 weekend meetings hidden here. Export keeps them.")
         );
         assert!(!rendered.contains("│10:00"));
         assert!(!rendered.contains("│23:30"));

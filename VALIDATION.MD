@@ -1,5 +1,25 @@
 # Validation record
 
+## TUI UX refresh: 2026-09-09
+
+Implementation commit: **`2cc76fa`**. Verified on **macOS arm64** with `bash scripts/verify-mvp.sh --live`.
+
+- **61 local tests passed**, plus **all three opt-in tests**, for **64 passing tests**. Format, strict Clippy, locked release build, release CLI/native-terminal regressions, and isolated installation checks all passed.
+- The actual **80×24 release executable** displays a full-width Monday–Sunday table with 30-minute rows. Its native-terminal test exercises the top search bar, both navigation key families, same-time member switching, complete notices, export, and terminal restoration.
+- The live native-terminal workflow still selects subjects, edits manual entries, optimizes, switches members, and exports **113 events**. Stale/duplicate export rejection, disabled-entry preservation, reoptimization, selection across multiword searches, and terminal restoration passed.
+- An isolated installed executable independently exported **113 events** from freshly fetched public Hydrant data. No calendar account or normal user installation was changed.
+
+| Requested behavior | Concrete checks and observed result |
+|---|---|
+| Weekly table with 30-minute rows and weekday columns | Eleven `tui::week` tests cover all headers, row spacing, day placement, exact-minute intersection, adjacency, shared buckets, Sunday midnight, highlighting, empty input, and Unicode/narrow widths. Integrated renderer and actual 80×24 PTY checks confirm the table is visible at full width. All passed. |
+| Search replaces the top status panel | Renderer and PTY assertions inspect the first three rows for the search input and absence of the old Status header. Long Unicode queries keep their tail and caret visible on resize. Searching retains selections and treats `hjkl` as text. All passed. |
+| `hjkl` and arrow navigation | State tests exercise both vertical key families in every pane and both horizontal key families through the full focus cycle. Native input verifies pane markers, subject movement, and result-section movement. Pane navigation does not change actual members. Search/editor/help mode isolation and complete help text passed. |
+| Preserve existing workflows | Existing optimizer/calendar/data/CLI tests, result scrolling and all-notice reachability, local/release PTY export, and live manual-entry/member/export workflow passed. The display grid does not round solver or exported meeting times. |
+
+The review/verification loop caught and fixed a search bar squeezed out at small heights and a wrapped help assertion. The final help is a readable command list, and a read-only integration review found no remaining actionable issues. Platform verification remains scoped to macOS.
+
+## Original MVP verification
+
 Verified on **2026-09-08**, macOS **26.6.2**, **arm64**, Rust **1.98.0**. This records checks against this repository's real library and executable, not the earlier isolated feasibility probes.
 
 **MVP complete within the documented full-term weekly scheduling scope.** The two remaining blockers, inaccessible small-terminal results/notices and lost CLI infeasibility with `--export`, are fixed and regression-tested. Additional platform, performance, and release-automation work is separate from MVP completion.

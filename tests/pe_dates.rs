@@ -1,3 +1,4 @@
+mod support;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{Datelike, NaiveDate};
@@ -583,10 +584,12 @@ fn export_bounded_pe_is_clipped_to_bounds_and_term_with_midnight_handling() {
     let report = calendar::export_ics(&calendar, &[chosen_pe(section)]).unwrap();
     assert_eq!(report.event_count, 2);
     assert!(report.notices.is_empty());
-    assert!(report.ics.contains("DTSTART:20261027T030000Z"));
-    assert!(report.ics.contains("DTEND:20261027T040000Z"));
-    assert!(report.ics.contains("DTSTART:20261104T040000Z"));
-    assert!(report.ics.contains("DTEND:20261104T050000Z"));
+    assert_eq!(report.ics.matches("BEGIN:VEVENT").count(), 1);
+    let expanded = support::expand_calendar(&report.ics);
+    assert!(expanded.contains("DTSTART:20261027T030000Z"));
+    assert!(expanded.contains("DTEND:20261027T040000Z"));
+    assert!(expanded.contains("DTSTART:20261104T040000Z"));
+    assert!(expanded.contains("DTEND:20261104T050000Z"));
     assert!(!report.ics.contains("20261109"));
 }
 

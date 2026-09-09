@@ -65,7 +65,8 @@ grep -q '"path": ".*fixture-[0-9]' "$evidence/installed-export.stdout"
 fixture_ics=( "$evidence"/fixture-*.ics )
 (( ${#fixture_ics[@]} == 1 ))
 events=$(grep -c '^BEGIN:VEVENT' "${fixture_ics[0]}")
-[[ $events == 6 ]]
+[[ $events == 2 ]]
+grep -q '"events": 6' "$evidence/installed-export.stdout"
 fixture_ics="${fixture_ics[0]}" 
 pe_fixture=(--data-dir "$evidence/pe-data" --catalog "$repo/tests/fixtures/catalog-pe.json" --term "$repo/tests/fixtures/term.json")
 run installed-pe-search 0 "${isolated[@]}" "${pe_fixture[@]}" --json search swimming
@@ -77,10 +78,11 @@ grep -q '"path": ".*pe-[0-9]' "$evidence/installed-pe-export.stdout"
 pe_ics=( "$evidence"/pe-*.ics )
 (( ${#pe_ics[@]} == 1 ))
 pe_ics="${pe_ics[0]}" 
-[[ $(grep -c '^BEGIN:VEVENT' "$pe_ics") == 9 ]]
-[[ $(grep -c '^SUMMARY:PE.' "$pe_ics") == 3 ]]
+[[ $(grep -c '^BEGIN:VEVENT' "$pe_ics") == 5 ]]
+grep -q '"events": 9' "$evidence/installed-pe-export.stdout"
+[[ $(grep -c '^SUMMARY:PE.' "$pe_ics") == 2 ]]
 for stamp in 20261026T150000Z 20261103T160000Z 20261109T160000Z; do
-  grep -q "^DTSTART:$stamp" "$pe_ics"
+  grep -q "$stamp" "$pe_ics"
 done
 cp "$fixture_ics" "$evidence/original.ics"
 before_count=$(ls "$evidence"/fixture-*.ics | wc -l)
@@ -114,7 +116,7 @@ if $live; then
   (( ${#live_ics[@]} == 1 ))
   events=$(grep -c '^BEGIN:VEVENT' "${live_ics[0]}")
   (( events > 0 ))
-  echo "Installed live workflow exported $events events."
+  echo "Installed live workflow exported $events calendar series."
 else
   echo "SKIP: live Hydrant and snapshot checks (enable with --live)."
 fi

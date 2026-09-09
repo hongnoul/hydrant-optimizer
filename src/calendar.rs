@@ -1,8 +1,9 @@
-//! Calendar export with dated New York events.
+//! Calendar export with recurring series of exact New York class dates.
 use anyhow::{Context, Result, ensure};
 use chrono::{Datelike, LocalResult, NaiveDate, TimeZone};
 use chrono_tz::America::New_York;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 use crate::color::component_label;
 use crate::model::{
@@ -13,6 +14,7 @@ use crate::model::{
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ExportReport {
     pub ics: String,
+    /// Number of class occurrences, not the number of recurring VEVENT masters.
     pub event_count: usize,
     pub notices: Vec<String>,
     /// Actual file written: the caller's hint plus a Unix-time suffix, e.g.
@@ -81,7 +83,8 @@ pub fn export_ics(calendar: &TermCalendar, chosen: &[ChosenSection]) -> Result<E
                     )
                 })?;
                 events.push(Event {
-                    uid: stable_uid(calendar, section, meeting, date),
+                    uid: stable_uid(calendar, section, &start, &end),
+                    recurrence_dates: Vec::new(),
                     start,
                     end,
                     summary: format!("{} {}", section.course_id, component_label(&section.kind)),
@@ -105,12 +108,28 @@ pub fn export_ics(calendar: &TermCalendar, chosen: &[ChosenSection]) -> Result<E
     }
 
     events.sort_by(|a, b| (&a.start, &a.end, &a.uid).cmp(&(&b.start, &b.end, &b.uid)));
-    events.dedup_by(|a, b| a.uid == b.uid);
+    events.dedup_by(|a, b| a.uid == b.uid && a.start == b.start && a.end == b.end);
     notices.sort();
     notices.dedup();
     let event_count = events.len();
+    // RDATE is a recurrence set, not a collection of unrelated appointments.
+    // Enumerating exact UTC starts preserves holidays, alternate weekdays and
+    // DST without requiring clients to interpret a custom VTIMEZONE or EXDATE.
+    // Equal-duration meetings in a section share one master, including meetings
+    // on different weekdays or at different times. Different durations need
+    // separate masters because RDATE inherits the master's event duration.
+    let mut series: BTreeMap<String, Event> = BTreeMap::new();
+    for event in events {
+        if let Some(master) = series.get_mut(&event.uid) {
+            master.recurrence_dates.push(event.start);
+        } else {
+            series.insert(event.uid.clone(), event);
+        }
+    }
+    let mut series: Vec<_> = series.into_values().collect();
+    series.sort_by(|a, b| (&a.start, &a.end, &a.uid).cmp(&(&b.start, &b.end, &b.uid)));
     Ok(ExportReport {
-        ics: render_calendar(&events),
+        ics: render_calendar(&series),
         event_count,
         notices,
         path: std::path::PathBuf::new(),
@@ -120,6 +139,7 @@ pub fn export_ics(calendar: &TermCalendar, chosen: &[ChosenSection]) -> Result<E
 #[derive(Clone, Debug)]
 struct Event {
     uid: String,
+    recurrence_dates: Vec<String>,
     start: String,
     end: String,
     summary: String,
@@ -190,22 +210,20 @@ fn local_to_utc(date: NaiveDate, minute: u16) -> Result<String> {
         .to_string())
 }
 
-fn stable_uid(
-    calendar: &TermCalendar,
-    section: &ChosenSection,
-    meeting: &Meeting,
-    date: NaiveDate,
-) -> String {
+fn stable_uid(calendar: &TermCalendar, section: &ChosenSection, start: &str, end: &str) -> String {
+    let parse = |value: &str| {
+        chrono::NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%SZ")
+            .expect("local_to_utc produces valid UTC timestamps")
+    };
+    let duration = (parse(end) - parse(start)).num_seconds();
     let bytes = serde_json::to_vec(&(
         calendar.start,
         calendar.end,
         &section.course_id,
         &section.kind,
         &section.section.id,
-        date,
-        meeting.weekday,
-        meeting.start_minute,
-        meeting.end_minute,
+        "recurring-series-v1",
+        duration,
     ))
     .expect("serializing stable calendar UID input cannot fail");
     format!("{:x}@hydrant-optimizer", Sha256::digest(bytes))
@@ -225,6 +243,13 @@ fn render_calendar(events: &[Event]) -> String {
         text.push_str("DTEND:");
         text.push_str(&event.end);
         text.push_str("\r\n");
+        if !event.recurrence_dates.is_empty() {
+            // DATE-TIME lists are not TEXT: commas must not be escaped.
+            push_content_line(
+                &mut text,
+                &format!("RDATE:{}", event.recurrence_dates.join(",")),
+            );
+        }
         push_property(&mut text, "SUMMARY", &event.summary);
         // MIT Hydrant always emits LOCATION (its `event.room` may be empty),
         // so Google/Apple Calendar show a location field consistently instead
@@ -244,8 +269,11 @@ fn render_calendar(events: &[Event]) -> String {
 }
 
 fn push_property(text: &mut String, name: &str, value: &str) {
+    push_content_line(text, &format!("{name}:{}", escape_text(value)));
+}
+
+fn push_content_line(text: &mut String, line: &str) {
     // RFC 5545 content lines are folded at 75 octets, never inside UTF-8.
-    let line = format!("{name}:{}", escape_text(value));
     let mut width = 0;
     for character in line.chars() {
         if width + character.len_utf8() > 75 {

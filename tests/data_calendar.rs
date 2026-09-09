@@ -1,3 +1,4 @@
+mod support;
 use std::{collections::BTreeSet, fs};
 
 use chrono::NaiveDate;
@@ -304,21 +305,29 @@ fn calendar_export_enumerates_actual_new_york_dates_holidays_alternates_dst_and_
         .clone();
     let report = calendar::export_ics(calendar, &[chosen(option)]).unwrap();
     assert_eq!(report.event_count, 3);
+    let masters: icalendar::Calendar = report.ics.parse().unwrap();
+    assert_eq!(masters.events().count(), 1);
+    assert!(
+        report
+            .ics
+            .contains("RDATE:20261103T140000Z,20261109T140000Z")
+    );
+    let expanded = support::expand_calendar(&report.ics);
     assert!(report.notices.is_empty());
     assert!(
-        report.ics.contains("DTSTART:20261026T130000Z"),
+        expanded.contains("DTSTART:20261026T130000Z"),
         "Oct 26 is EDT"
     );
     assert!(
-        report.ics.contains("DTSTART:20261103T140000Z"),
+        expanded.contains("DTSTART:20261103T140000Z"),
         "Nov 3 alternate Monday is EST after DST ends"
     );
-    assert!(report.ics.contains("DTSTART:20261109T140000Z"));
+    assert!(expanded.contains("DTSTART:20261109T140000Z"));
     assert!(
-        !report.ics.contains("DTSTART:20261102"),
+        !expanded.contains("DTSTART:20261102"),
         "holiday Monday should be skipped"
     );
-    let parsed: icalendar::Calendar = report.ics.parse().unwrap();
+    let parsed: icalendar::Calendar = expanded.parse().unwrap();
     assert_eq!(parsed.events().count(), report.event_count);
     let again = calendar::export_ics(
         calendar,
@@ -782,4 +791,95 @@ fn calendar_always_emits_location_with_room_or_tba_like_hydrant() {
         "missing rooms must still emit LOCATION:TBA like Hydrant:\n{unfolded}"
     );
     assert_eq!(unfolded.matches("LOCATION:").count(), 2);
+}
+
+#[test]
+fn recurrence_groups_weekdays_and_times_but_separates_components_and_durations() {
+    let calendar = fixture_dataset().calendar.unwrap();
+    let mut lecture = chosen(manual_option("weekly", 0, 9 * 60, 10 * 60));
+    lecture.section.meetings.push(Meeting {
+        weekday: 2,
+        start_minute: 14 * 60,
+        end_minute: 15 * 60,
+        start_date: None,
+        end_date: None,
+    });
+    let mut longer = lecture.section.meetings[1].clone();
+    longer.weekday = 4;
+    longer.end_minute += 30;
+    lecture.section.meetings.push(longer);
+    let mut recitation = lecture.clone();
+    recitation.kind = "recitation".into();
+    recitation.section.meetings.truncate(1);
+    let report = calendar::export_ics(
+        &calendar,
+        &[lecture.clone(), recitation.clone(), lecture.clone()],
+    )
+    .unwrap();
+    let parsed: icalendar::Calendar = report.ics.parse().unwrap();
+    assert_eq!(
+        parsed.events().count(),
+        3,
+        "one lecture series per duration, plus separate recitation"
+    );
+    assert_eq!(
+        report.event_count, 10,
+        "duplicate input must not duplicate occurrences"
+    );
+    let unfolded = report.ics.replace("\r\n ", "");
+    let lecture_series = unfolded
+        .split("BEGIN:VEVENT\r\n")
+        .skip(1)
+        .find(|e| e.contains("SUMMARY:A Lec") && e.contains("DTSTART:20261026T130000Z"))
+        .unwrap();
+    assert!(
+        lecture_series.contains(
+            "RDATE:20261028T180000Z,20261103T140000Z,20261104T190000Z,20261109T140000Z\r\n"
+        )
+    );
+    assert!(
+        !lecture_series.contains("\\,"),
+        "RDATE separators are not escaped TEXT"
+    );
+    let expanded = support::expand_calendar(&report.ics);
+    assert!(expanded.contains("DTSTART:20261106T190000Z\r\nDTEND:20261106T203000Z"));
+    lecture.section.meetings.reverse();
+    let reordered = calendar::export_ics(&calendar, &[recitation, lecture]).unwrap();
+    assert_eq!(
+        report.ics, reordered.ics,
+        "input order and duplicate sections cannot change series identity"
+    );
+}
+
+#[test]
+fn recurrence_dates_fold_and_round_trip_without_losing_occurrences() {
+    let calendar = TermCalendar {
+        start: date("2026-09-01"),
+        end: date("2026-12-31"),
+        holidays: Default::default(),
+        alternate_days: Default::default(),
+    };
+    let report =
+        calendar::export_ics(&calendar, &[chosen(manual_option("long", 0, 600, 660))]).unwrap();
+    assert_eq!(report.event_count, 17);
+    assert!(report.ics.contains("\r\n "));
+    assert!(report.ics.split("\r\n").all(|line| line.len() <= 75));
+    let parsed: icalendar::Calendar = report.ics.parse().unwrap();
+    assert_eq!(parsed.events().count(), 1);
+    use icalendar::Component;
+    let rdate = parsed
+        .events()
+        .next()
+        .unwrap()
+        .multi_properties()
+        .get("RDATE")
+        .unwrap()[0]
+        .value();
+    assert_eq!(rdate.split(',').count(), 16);
+    assert_eq!(
+        support::expand_calendar(&report.ics)
+            .matches("BEGIN:VEVENT")
+            .count(),
+        17
+    );
 }

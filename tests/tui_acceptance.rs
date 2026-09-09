@@ -2,6 +2,7 @@
 //! Live case: cargo test --test tui_acceptance -- --ignored --nocapture
 #![cfg(unix)]
 
+mod support;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde_json::Value;
 use std::{
@@ -666,7 +667,13 @@ fn actual_tui_pe_search_selection_labels_and_bounded_export() {
     ui.marker("Exported");
     let text = read_latest_export(temp.path(), &output);
     let calendar: icalendar::Calendar = text.parse().unwrap();
-    assert_eq!(calendar.events().count(), 7);
+    assert_eq!(calendar.events().count(), 4);
+    assert_eq!(
+        support::expand_calendar(&text)
+            .matches("BEGIN:VEVENT")
+            .count(),
+        7
+    );
     let pe_events: Vec<_> = text
         .split("BEGIN:VEVENT")
         .skip(1)
@@ -934,7 +941,9 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     ui.marker("Exported");
     let calendar = read_latest_export(dir, &output);
     let parsed: icalendar::Calendar = calendar.parse().unwrap();
-    assert_eq!(parsed.events().count(), 17);
+    assert!(parsed.events().count() < 17);
+    let calendar = support::expand_calendar(&calendar);
+    assert_eq!(calendar.matches("BEGIN:VEVENT").count(), 17);
     for exact in [
         "DTSTART:20261026T130500Z",
         "DTEND:20261026T132000Z",
@@ -951,7 +960,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     assert!(calendar.contains(&format!("LOCATION:{next_room}")));
     println!(
         "UX_OBSERVATION {}",
-        serde_json::json!({"requirement":"exact_times_and_export", "source_exact_times":["Mon 09:05-09:20","Tue 09:35-10:05","Sun 23:35-24:00"], "member_navigation":"Enter, Enter, l", "switched_room":next_room, "events":parsed.events().count(), "exact_utc_boundaries_preserved":true})
+        serde_json::json!({"requirement":"exact_times_and_export", "source_exact_times":["Mon 09:05-09:20","Tue 09:35-10:05","Sun 23:35-24:00"], "member_navigation":"Enter, Enter, l", "switched_room":next_room, "events":17, "series":parsed.events().count(), "exact_utc_boundaries_preserved":true})
     );
     // Search hides X, but Selected must retain both classes. Horizontal focus
     // now reaches Selected rather than the old always-visible Manual pane.
@@ -1419,7 +1428,13 @@ fn actual_tui_80x24_navigates_sessions_and_exports_with_unknown_subjects() {
     ui.marker("Exported");
     let text = read_latest_export(dir, &output);
     let parsed: icalendar::Calendar = text.parse().unwrap();
-    assert_eq!(parsed.events().count(), 6);
+    assert_eq!(parsed.events().count(), 2);
+    assert_eq!(
+        support::expand_calendar(&text)
+            .matches("BEGIN:VEVENT")
+            .count(),
+        6
+    );
     assert!(
         text.contains(&format!("LOCATION:{next_room}")),
         "switched member must reach export"
@@ -1441,7 +1456,7 @@ fn actual_tui_80x24_navigates_sessions_and_exports_with_unknown_subjects() {
             "vertical_keys_checked":["j","k","Up","Down"],
             "timetable_navigation_checked":["t","Enter","j","k","Up","Down","l","Left","Right","Esc"],
             "removed_shortcuts_ignored":["r","n","p"], "unknown_subjects_selected":10,
-            "same_time_member_position":"2/2", "exported_events":parsed.events().count(),
+            "same_time_member_position":"2/2", "exported_events":6, "exported_series":parsed.events().count(),
             "exported_selected_room":next_room, "termios_and_alternate_screen_restored":true
         })
     );

@@ -1,5 +1,6 @@
 //! Opt-in real public-service / actual-executable acceptance, not a mock server.
 //! Run: cargo test --test live_acceptance -- --ignored --nocapture
+mod support;
 use serde_json::Value;
 use std::{
     fs,
@@ -167,7 +168,10 @@ fn live_catalog_manual_refresh_optimize_switch_and_export() {
     assert!(!hint.exists(), "the bare hint must never be written");
     let text = fs::read_to_string(&output).unwrap();
     let parsed: icalendar::Calendar = text.parse().unwrap();
-    let count = parsed.events().count();
+    assert!(parsed.events().count() > 0);
+    let count = support::expand_calendar(&text)
+        .matches("BEGIN:VEVENT")
+        .count();
     assert_eq!(
         count,
         exported["export"]["events"].as_u64().unwrap() as usize
@@ -236,7 +240,9 @@ fn live_catalog_manual_refresh_optimize_switch_and_export() {
     assert!(!pe_hint.exists(), "the bare hint must never be written");
     let pe_text = fs::read_to_string(&pe_output).unwrap();
     let pe_calendar: icalendar::Calendar = pe_text.parse().unwrap();
-    let pe_count = pe_calendar.events().count();
+    assert!(pe_calendar.events().count() > 0);
+    let pe_text = support::expand_calendar(&pe_text);
+    let pe_count = pe_text.matches("BEGIN:VEVENT").count();
     assert!(pe_count > 0);
     assert_eq!(
         pe_count,

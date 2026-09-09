@@ -1,3 +1,4 @@
+mod support;
 use std::collections::BTreeMap;
 
 use hydrant_optimizer::{
@@ -154,8 +155,9 @@ fn pe_catalog_optimizes_with_academics_and_exports_only_offering_dates() {
     assert!(report.ics.contains("PE.1000.Q1 pe") && report.ics.contains("PE.1000.Q2 pe"));
     assert!(report.ics.contains("SUMMARY:PE.1000.Q1 PE"));
     assert!(report.ics.contains("SUMMARY:PE.1000.Q2 PE"));
-    let pe_events: Vec<_> = report
-        .ics
+    assert_eq!(report.ics.matches("BEGIN:VEVENT").count(), 5);
+    let expanded = support::expand_calendar(&report.ics);
+    let pe_events: Vec<_> = expanded
         .split("BEGIN:VEVENT")
         .skip(1)
         .filter(|event| event.contains("SUMMARY:PE."))

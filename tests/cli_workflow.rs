@@ -1,4 +1,5 @@
 //! Actual executable integration tests. Synthetic fixtures supplement live acceptance.
+mod support;
 use serde_json::Value;
 use std::{
     fs,
@@ -121,7 +122,7 @@ fn actual_cli_selection_manual_entry_optimization_switch_and_export() {
     let calendar: icalendar::Calendar = text.parse().unwrap();
     assert!(calendar.events().count() > 0);
     assert!(text.contains("DTSTART:20261026T130000Z"));
-    assert!(text.contains("DTSTART:20261103T140000Z"));
+    assert!(support::expand_calendar(&text).contains("DTSTART:20261103T140000Z"));
     assert!(!text.contains("DTSTART:20261102"));
     // Validate the actual file handed to calendar clients, not just the
     // exporter helper: every event has only standard meeting details.
@@ -139,6 +140,7 @@ fn actual_cli_selection_manual_entry_optimization_switch_and_export() {
         let (body, _) = event.split_once("END:VEVENT\r\n").unwrap();
         let properties = body
             .lines()
+            .filter(|line| !line.starts_with("RDATE:"))
             .map(|line| line.split_once(':').unwrap().0)
             .collect::<Vec<_>>();
         assert_eq!(properties, event_properties);

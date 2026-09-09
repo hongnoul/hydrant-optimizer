@@ -90,7 +90,7 @@ The timetable has its own viewport with PgUp/PgDn and Home/End scrolling. Its gr
 
 Expand each selected actual section into dated occurrences within reliable term/meeting bounds. Fully bounded PE is supported, while other partial-term sections remain explicitly omitted. The weekly score/display combines all selected PE quarters, but conflict checks and event expansion respect their actual date windows. Apply holidays and alternate-weekday substitutions before timezone conversion. Interpret wall-clock times in `America/New_York`, then serialize each occurrence in UTC. This preserves 09:00 classes across DST rather than repeating a fixed UTC hour.
 
-Reject or disclose ambiguous/nonexistent local times, missing calendar bounds, and unsupported sections. Export known supported meetings and surface omissions. Include stable event UIDs and escaped labels/rooms. Do not claim that successful serialization alone proves calendar-client interoperability.
+Reject or disclose ambiguous/nonexistent local times, missing calendar bounds, and unsupported sections. Export known supported meetings and surface omissions. Group equal-duration occurrences by course, component, and section into one VEVENT with a stable series UID and explicit UTC RDATEs. Different durations remain separate series. Keep export counts occurrence-based, and escape labels/rooms but not recurrence date lists. Do not claim that successful serialization alone proves calendar-client interoperability.
 
 Write output atomically with a Unix-time filename suffix, so every export is a new file. Export does not mutate a user's calendar account. Release artifacts are native executables per target; only platforms actually built and exercised are claimed as verified.
 

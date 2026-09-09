@@ -42,6 +42,20 @@ hydrant-optimizer --offline optimize 6.1200 18.01 \
 
 Use `./target/release/hydrant-optimizer` in place of `hydrant-optimizer` unless installed on `PATH`. `cargo install --path . --locked` installs the executable locally. Subject availability depends on the downloaded term. Run `--help` and `manual --help` for the full CLI.
 
+### Calendar recurrence
+
+ICS exports group equal-duration meetings in each selected course section into a
+recurring series with a stable UID and explicit `RDATE` occurrences. This lets
+calendar apps that support iCalendar recurrence offer series-level editing and
+deletion. Lectures and recitations stay separate, as do meetings with different
+durations. Exact dates preserve holidays, alternate class days, PE date bounds,
+and New York daylight-saving transitions. Export counts still count individual
+class occurrences, not series.
+
+Previously imported standalone events will not be converted automatically.
+Remove the old import before importing a newly generated file to avoid duplicates.
+The exact deletion prompt depends on the calendar app.
+
 ### Live TUI development
 
 Run once in an interactive terminal from the repository:

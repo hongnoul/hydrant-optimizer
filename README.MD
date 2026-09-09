@@ -1,8 +1,8 @@
 # Hydrant Optimizer
 
-A local **Rust** MIT course scheduler. Select a fixed set of subjects, supply missing section times, find an exact compact weekly timetable, and export a local `.ics` file. No Python runtime, server, or solver service is required.
+A local MIT course scheduler. Select a fixed set of subjects, supply missing section times, find an exact compact weekly timetable, and export a local `.ics` file.
 
-**The working demo is a terminal user interface (TUI), not a hosted web app.** The optimizer is open source under the [MIT License](LICENSE), so anyone can reuse it to build another interface, such as a web app. The Rust library exposes the scheduling model and optimizer independently of the TUI through `hydrant_optimizer::model` and `hydrant_optimizer::optimizer`. A web backend can call that library, or integrate with the CLI's JSON output. A web frontend and hosting are not included in this demo.
+The optimizer is open source under the [MIT License](LICENSE). Working demo features a TUI. The Rust library exposes the scheduling model and optimizer independently of the TUI through `hydrant_optimizer::model` and `hydrant_optimizer::optimizer`. A web backend can call that library, or integrate with the CLI's JSON output. A web frontend and hosting are not included in this demo.
 
 Read [ARCHITECTURE.MD](ARCHITECTURE.MD) for the module boundaries and [OPTIMIZER.MD](OPTIMIZER.MD) for the exactness contract.
 
@@ -31,7 +31,6 @@ hydrant-optimizer --offline manual add --course 6.1200 --kind recitation \
   --meetings 'Wed 13:05-14:00;Fri 13:05-14:00'
 
 # Export the selected schedule. Every export gains a Unix-time suffix
-# (e.g. my-schedule-1757424600.ics), so repeats never overwrite.
 hydrant-optimizer --offline --output my-schedule.ics optimize 6.1200 18.01 --export
 
 # Machine-readable results include same-time members and their stable IDs.
@@ -105,14 +104,6 @@ All panels and overlays resize to the current terminal pane, leaving one unused 
 Subjects and Selected classes share the upper row equally. Optimized schedules appear below them as a **separate edge-to-edge timetable**, without an outer container or legend. A single heading shows focus and scroll position above the grid. **Monday–Friday columns and 30-minute rows** span the earliest through latest chosen weekday meetings. Colored cells show subject numbers and components: **Lec**, **Rec**, **Lab**, **PE**, or another component label. Narrow cells shorten the subject number before the component. Off-grid meetings occupy each intersecting half-hour cell without changing their actual times. A `2×` (or higher) marker indicates multiple meetings sharing a half-hour cell, not necessarily a scheduling conflict. Crowded cells retain a component summary rather than suggesting incorrect subject/component pairings. Weekend meetings are explicitly disclosed outside the grid and remain in optimization and export.
 
 The timetable scrolls at **80×24** using PgUp/PgDn and Home/End. The Results pane and its shortcuts have been removed. Full machine-readable optimization details remain available through the CLI.
-
-### PE classes
-
-Search `PE.` or an activity name to find Hydrant's PE offerings, then select them like academic subjects. Each quarter has a stable selectable ID: `PE.<number>.Q1` through `Q4`, or `Q5` for IAP. Titles and section labels show the activity, quarter, and published dates. This lets you select the same activity in separate quarters without confusing their sections.
-
-PE requires known meeting times and complete start/end dates. Disjoint quarters can share a weekly time slot without a false conflict. Export includes only occurrences inside both the offering's date range and the loaded term, respecting its holidays and alternate weekdays. The score and grid use the **combined weekly pattern across selected quarters**, not a separate cost per actual week. Unknown times, missing dates, and offerings outside the loaded term are disclosed, not invented or silently extended to a semester.
-
-Press `a` on the highlighted offering to add manual times. A timed published PE option prefills the `pe` component and its date bounds. Manual PE sections require complete bounds too. The application does not register you for PE or check availability, prerequisites, or credit completion.
 
 ### Local files
 

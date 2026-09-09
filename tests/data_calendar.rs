@@ -712,3 +712,45 @@ fn calendar_rejects_invalid_calendars_and_ambiguous_or_nonexistent_local_times()
     calendar.alternate_days.insert(calendar.start, 7);
     assert!(calendar::export_ics(&calendar, &[]).is_err());
 }
+
+fn chosen_for(course_id: &str, weekday: u8) -> ChosenSection {
+    ChosenSection {
+        course_id: course_id.to_string(),
+        course_title: format!("{course_id} title"),
+        kind: "lecture".to_string(),
+        section: manual_option(&format!("manual-{course_id}"), weekday, 540, 600),
+    }
+}
+
+#[test]
+fn calendar_embeds_nth_distinct_color_matching_the_tui() {
+    let calendar = TermCalendar {
+        start: date("2026-10-26"),
+        end: date("2026-10-26"),
+        holidays: Default::default(),
+        alternate_days: Default::default(),
+    };
+    // Monday-only calendar date, so only the Monday section exports.
+    let report =
+        calendar::export_ics(&calendar, &[chosen_for("B", 0), chosen_for("A", 2)]).unwrap();
+    assert_eq!(report.event_count, 1);
+    let unfolded = report.ics.replace("\r\n ", "");
+    // Sorted order is A, B, so B is palette index 1: Basil #0B8043, colorId 10.
+    for expected in [
+        "COLOR:#0B8043",
+        "CATEGORIES:hydrant-optimizer\\,B\\,Basil",
+        "X-HYDRANT-COURSE:B",
+        "X-HYDRANT-COLOR-NAME:Basil",
+        "X-HYDRANT-COLOR:#0B8043",
+        "X-HYDRANT-GCAL-COLOR-ID:10",
+        "Color: Basil #0B8043 (Google Calendar event colorId 10)",
+    ] {
+        assert!(
+            unfolded.contains(expected),
+            "missing {expected} in:\n{unfolded}"
+        );
+    }
+    assert!(report.ics.split("\r\n").all(|line| line.len() <= 75));
+    let parsed: icalendar::Calendar = report.ics.parse().unwrap();
+    assert_eq!(parsed.events().count(), report.event_count);
+}

@@ -214,7 +214,7 @@ fn row_line(plan: &ColumnPlan, entries: &[Entry], slot_start: u16) -> Line<'stat
     let mut spans = Vec::with_capacity(DAY_COUNT * 2 + 3);
     spans.push(Span::raw("│"));
     spans.push(Span::raw(pad_cell(
-        &if slot_start % 60 == 0 {
+        &if slot_start.is_multiple_of(60) {
             format_time(slot_start)
         } else {
             String::new()
@@ -1061,6 +1061,47 @@ mod tests {
             .find(|span| span.content.contains("6.1200"))
             .unwrap();
         assert_eq!(highlighted.style.bg, Some(Color::White));
+    }
+
+    #[test]
+    fn nth_distinct_courses_get_distinct_colors_in_sorted_order() {
+        // Eight non-overlapping Monday slots, one per course. Nth-distinct
+        // assignment means sorted course n gets PALETTE[n] regardless of
+        // input order, so feed the sections in reverse.
+        let sorted = ["A", "B", "C", "D", "E", "F", "G", "H"];
+        let mut sections = sorted
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                let start = 480 + index as u16 * 30;
+                section(id, "lecture", "L1", vec![meeting(0, start, start + 30)])
+            })
+            .collect::<Vec<_>>();
+        sections.reverse();
+        let lines = week_lines(&sections, 100, None);
+        let mut backgrounds = Vec::new();
+        for (index, id) in sorted.iter().enumerate() {
+            let row = row_text(&lines, &format_time(480 + index as u16 * 30));
+            let column = row.split('│').nth(2).expect("Monday column is missing");
+            assert!(
+                column.contains(id),
+                "expected {id} in its own row, got {column:?}"
+            );
+            let span = lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .find(|span| {
+                    span.content.contains(&format!("{id} Lec"))
+                        && span.style.bg != Some(Color::White)
+                })
+                .expect("course cell is missing");
+            backgrounds.push(span.style.bg);
+        }
+        assert_eq!(
+            backgrounds,
+            PALETTE.iter().map(|color| Some(*color)).collect::<Vec<_>>(),
+            "sorted courses A..H must take PALETTE in order"
+        );
     }
 
     #[test]

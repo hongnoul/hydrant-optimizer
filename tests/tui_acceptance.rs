@@ -562,12 +562,14 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         reference["solution"]["score"],
         serde_json::json!({"occupied_days":7,"gap_minutes":0})
     );
-    let next_member = &reference["solution"]["choices"]
+    let choice = reference["solution"]["choices"]
         .as_array()
         .unwrap()
         .iter()
         .find(|choice| choice["requirement_id"] == "W/lecture")
-        .unwrap()["members"][1];
+        .unwrap();
+    let initial_room = choice["members"][0]["room"].as_str().unwrap();
+    let next_member = &choice["members"][1];
     let next_room = next_member["room"].as_str().unwrap();
     let next_label = next_member["label"].as_str().unwrap();
     let mut args = source.to_vec();
@@ -632,8 +634,8 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     }
     assert_eq!(
         week_row(&screen, "10:00").unwrap()[2],
-        "",
-        "continuation row must not repeat the session label"
+        initial_room,
+        "the second session row must show its room, not repeat the legend"
     );
     assert_eq!(
         week_row(&screen, "10:30").unwrap()[2],
@@ -644,6 +646,12 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     assert!(!screen.contains("Lec=lecture"));
     assert_three_pane_ui(&screen);
     let timetable = pane_contents(&screen, "Timetable");
+    assert_eq!(
+        timetable.matches(initial_room).count(),
+        1,
+        "only Tuesday spans two rows, so all one-row meetings must omit rooms"
+    );
+    assert!(!timetable.contains("Bucket room"));
     for title in ["Subjects", "Selected"] {
         assert!(week_row(&pane_contents(&screen, title), "Time").is_none());
     }
@@ -689,6 +697,9 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     ui.until("actual member switched", |s| {
         s.contains(&format!("W/lecture now uses {next_label}"))
     });
+    let switched = ui.screen.screen().contents();
+    assert_eq!(week_row(&switched, "10:00").unwrap()[2], next_room);
+    assert!(!pane_contents(&switched, "Timetable").contains(initial_room));
     ui.send(b"e");
     ui.marker("Exported");
     let calendar = fs::read_to_string(&output).unwrap();

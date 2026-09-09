@@ -299,7 +299,9 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
     // A second export must not overwrite the first file.
     ui.send(b"e");
     ui.until("overwrite rejection", |s| {
-        s.contains("never overwritten") || s.contains("already exists")
+        // Long checkout/output paths can wrap "never overwritten" across rows.
+        // Require the failure status and its reason, then verify bytes below.
+        s.contains("Export failed:") && (s.contains("overwritten") || s.contains("already exists"))
     });
     assert_eq!(fs::read_to_string(&output).unwrap(), calendar);
 

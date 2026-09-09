@@ -70,6 +70,8 @@ The repository includes `bash scripts/verify-mvp.sh --live` to run build/lint, a
 
 Handoff checks passed with macOS `/bin/bash` in both local and live modes, including an evidence path containing spaces. The installed fixture workflow produced **6 events**, the live workflow **113 events**, and infeasible text/JSON exports preserved existing bytes and created no missing output. Help exited 0 and malformed arguments exited 2 without creating artifacts. An injected Cargo failure stopped the runner with exit 1 before installation, retaining the underlying exit 77 and its diagnostics. Evidence includes start time and Git revision/worktree status when Git is available. These runner checks supplement the 47 Rust tests, not replace them.
 
+A clean-source relocation check exposed a test-driver assumption: with a long checkout/output path, the visible phrase `never overwritten` wrapped across terminal rows. The native assertion now accepts that legitimate wrapping while still requiring export failure and byte-identical calendar preservation. Portability claims remain limited to the macOS handoff, not untested platforms.
+
 ```sh
 cargo fmt --check
 cargo test --locked

@@ -146,17 +146,20 @@ fn week_row(screen: &str, time: &str) -> Option<Vec<String>> {
         .lines()
         .find(|line| line.split('│').any(|cell| cell.trim() == time))
         .map(|line| {
-            line.split('│')
+            line.trim()
+                .strip_prefix('│')
+                .and_then(|row| row.strip_suffix('│'))
+                .expect("weekday rows have left and right borders")
+                .split('│')
                 .map(str::trim)
-                .filter(|part| !part.is_empty())
                 .map(str::to_owned)
                 .collect()
         })
 }
 
 // Read a rendered pane without its focus-dependent title or border. Keeping the
-// real terminal's pane boundaries lets scroll checks distinguish Results from
-// the simultaneously visible Timetable instead of matching text anywhere.
+// real terminal's pane boundaries lets scroll checks distinguish Subjects and
+// Selected from the Timetable instead of matching text anywhere.
 fn pane_contents(screen: &str, title: &str) -> String {
     if title == "Timetable" {
         // The timetable has no parent box. Read below its fixed heading until
@@ -198,23 +201,48 @@ fn pane_contents(screen: &str, title: &str) -> String {
         .join("\n")
 }
 
-fn previous_results_pages_until(ui: &mut Driver, text: &str) {
-    for _ in 0..100 {
-        let before = pane_contents(&ui.screen.screen().contents(), "Results");
-        if before
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .contains(text)
-        {
-            return;
-        }
-        ui.send(b"\x1b[5~");
-        ui.until(&format!("previous Results page seeking {text}"), |screen| {
-            pane_contents(screen, "Results") != before
-        });
+fn assert_three_pane_ui(screen: &str) {
+    for title in ["Subjects", "Selected", "Timetable"] {
+        assert!(screen.contains(title), "missing {title}\n{screen}");
     }
-    panic!("never exposed complete Results text: {text}");
+    assert!(
+        !screen.to_lowercase().contains("results"),
+        "removed Results pane or shortcut is still visible\n{screen}"
+    );
+}
+
+fn assert_removed_shortcuts_ignored(ui: &mut Driver) {
+    // Clearing the help overlay can materialize trailing blank cells in vt100.
+    // Those invisible cells do not represent a shortcut changing the UI.
+    let visible = |screen: &str| {
+        screen
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for key in [b'r', b'n', b'p'] {
+        let before = ui.screen.screen().contents();
+        // Opening then closing help is a round-trip barrier. Merely waiting for
+        // an unchanged screen could pass before the removed key is processed.
+        ui.send(&[key, b'?']);
+        ui.marker("Help");
+        let help = ui.screen.screen().contents().to_lowercase();
+        assert!(!help.contains("results"), "obsolete help entry\n{help}");
+        assert!(!help.contains("n/p"), "obsolete member shortcut\n{help}");
+        ui.send(b"?");
+        ui.until("help closed after removed shortcut", |screen| {
+            !screen.contains("Help")
+        });
+        let after = ui.screen.screen().contents();
+        assert_eq!(
+            visible(&after),
+            visible(&before),
+            "removed shortcut {} changed the UI",
+            key as char
+        );
+        assert_three_pane_ui(&after);
+    }
 }
 
 #[test]
@@ -267,11 +295,9 @@ fn actual_tui_pe_search_selection_labels_and_bounded_export() {
     });
     ui.send(b"o");
     ui.marker("Optimal:");
-    ui.send(b"r");
+    ui.send(b"t");
     ui.until("all academic and PE component labels", |screen| {
-        screen.contains("> Results")
-            && screen.contains("Timetable")
-            && week_row(screen, "11:00").is_some()
+        screen.contains("> Timetable") && week_row(screen, "11:00").is_some()
     });
     let screen = ui.screen.screen().contents();
     let header: Vec<_> = screen
@@ -355,14 +381,14 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         reference["solution"]["score"],
         serde_json::json!({"occupied_days":7,"gap_minutes":0})
     );
-    let next_room = reference["solution"]["choices"]
+    let next_member = &reference["solution"]["choices"]
         .as_array()
         .unwrap()
         .iter()
         .find(|choice| choice["requirement_id"] == "W/lecture")
-        .unwrap()["members"][1]["room"]
-        .as_str()
-        .unwrap();
+        .unwrap()["members"][1];
+    let next_room = next_member["room"].as_str().unwrap();
+    let next_label = next_member["label"].as_str().unwrap();
     let mut args = source.to_vec();
     args.extend(["tui", "--select", "W", "--select", "X"]);
     let output = dir.join("week.ics");
@@ -390,9 +416,9 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     );
     ui.send(b"o");
     ui.marker("Optimal: 7 occupied day(s), 0 gap minute(s).");
-    ui.send(b"r");
+    ui.send(b"t");
     ui.until("weekday grid with weekend disclosure", |s| {
-        s.contains("> Results")
+        s.contains("> Timetable")
             && s.contains("PgUp/Dn |")
             && week_row(s, "11:00").is_some()
             && s.contains("weekend")
@@ -417,13 +443,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     let first = week_row(&screen, "09:00").unwrap();
     assert!(first[1].contains("2×") && first[1].contains('W') && first[1].contains('X'));
     assert!(first[2..].iter().all(|cell| cell == "·"));
-    for (time, day) in [
-        ("09:30", 2),
-        ("10:00", 2),
-        ("10:00", 3),
-        ("10:30", 4),
-        ("11:00", 5),
-    ] {
+    for (time, day) in [("09:30", 2), ("10:00", 3), ("10:30", 4), ("11:00", 5)] {
         assert_eq!(
             week_row(&screen, time).unwrap()[day],
             "W Lec",
@@ -431,18 +451,22 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         );
     }
     assert_eq!(
+        week_row(&screen, "10:00").unwrap()[2],
+        "",
+        "continuation row must not repeat the session label"
+    );
+    assert_eq!(
         week_row(&screen, "10:30").unwrap()[2],
         "·",
         "end boundary must not occupy another bucket"
     );
     assert!(!screen.contains("Legend:"));
     assert!(!screen.contains("Lec=lecture"));
-    let results = pane_contents(&screen, "Results");
+    assert_three_pane_ui(&screen);
     let timetable = pane_contents(&screen, "Timetable");
-    assert!(
-        week_row(&results, "Time").is_none(),
-        "Results must not contain the week grid"
-    );
+    for title in ["Subjects", "Selected"] {
+        assert!(week_row(&pane_contents(&screen, title), "Time").is_none());
+    }
     assert_eq!(week_row(&timetable, "Time").unwrap(), headers);
     let timetable_title = screen
         .lines()
@@ -454,7 +478,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         .unwrap();
     assert!(
         timetable_title > subjects_title,
-        "Timetable belongs below all three main panes"
+        "Timetable belongs below the Subjects and Selected panes"
     );
     assert!(!screen.lines().nth(timetable_title).unwrap().contains('┌'));
     let border = screen.lines().nth(timetable_title + 1).unwrap();
@@ -475,17 +499,15 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         serde_json::json!({"requirement":"weekly_grid", "headers":headers, "visible_half_hour_rows":observed_times.len(), "first_row":observed_times.first(), "last_row":observed_times.last(), "monday_shared_bucket":first[1], "all_weekdays_placed":true,"weekend_disclosed":true, "adjacent_meetings_not_conflicts":true})
     );
 
-    // Exact details now begin in Results, independently of the weekly grid.
-    ui.send(b"\x1b[H");
-    ui.until("exact labels and rooms", |s| {
-        s.contains("Sun 23:35-24:00")
-            && s.contains("Mon 09:05-09:20")
-            && s.contains("Tue 09:35-10:05")
-            && s.contains("Bucket room")
-    });
-    ui.send(b"n");
+    // Drill into the first chronological session (W), then its same-time
+    // options. Exact-minute and room fidelity is checked in the actual export.
+    ui.send(b"\r");
+    ui.marker("Sessions: Enter options");
+    ui.send(b"\r");
+    ui.marker("Options: h/l switch");
+    ui.send(b"l");
     ui.until("actual member switched", |s| {
-        s.contains("(2/2)") && s.contains(next_room)
+        s.contains(&format!("W/lecture now uses {next_label}"))
     });
     ui.send(b"e");
     ui.marker("Exported");
@@ -508,7 +530,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     assert!(calendar.contains(&format!("LOCATION:{next_room}")));
     println!(
         "UX_OBSERVATION {}",
-        serde_json::json!({"requirement":"exact_details_and_export", "displayed_exact_times":["Mon 09:05-09:20","Tue 09:35-10:05","Sun 23:35-24:00"], "switched_room":next_room, "events":parsed.events().count(), "exact_utc_boundaries_preserved":true})
+        serde_json::json!({"requirement":"exact_times_and_export", "source_exact_times":["Mon 09:05-09:20","Tue 09:35-10:05","Sun 23:35-24:00"], "member_navigation":"Enter, Enter, l", "switched_room":next_room, "events":parsed.events().count(), "exact_utc_boundaries_preserved":true})
     );
     // Search hides X, but Selected must retain both classes. Horizontal focus
     // now reaches Selected rather than the old always-visible Manual pane.
@@ -567,16 +589,10 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         assert!(!header.contains("week"));
         old.send(b"o");
         old.marker("Optimal: 7 occupied day(s), 0 gap minute(s).");
-        old.send(b"r\x1b[H");
-        old.until("baseline timetable at top", |s| {
-            s.contains("Timetable")
-                && s.contains("Status: OptimalKnown")
-                && s.contains("Sun 23:35-24:00")
-        });
         let old_screen = old.screen.screen().contents();
         assert!(week_row(&old_screen, "Time").is_none());
         assert!(week_row(&old_screen, "09:00").is_none());
-        old.send(b"\tl\r");
+        old.send(b"/\rl\r");
         old.marker("selected 1");
         assert!(!old.screen.screen().contents().contains("Edit manual entry"));
         old.send(b"q");
@@ -584,7 +600,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
         assert!(old.child.wait().unwrap().success());
         println!(
             "UX_COMPARISON {}",
-            serde_json::json!({"baseline_revision":"149c684", "before":{"status_header":true,"query_in_top_bar":false,"weekly_day_columns":0,"half_hour_table_rows":0,"l_focus":"Subjects (focus did not move)","l_then_enter":"deselects filtered subject"},"after":{"status_header":false,"query_in_top_bar":true,"weekly_day_columns":5,"half_hour_table_rows":5,"l_focus":"Selected","timetable_independent_of_results":true,"manual_overlay_preserves_selection":true},"same_fixture_and_terminal_size":true})
+            serde_json::json!({"baseline_revision":"149c684", "before":{"status_header":true,"query_in_top_bar":false,"weekly_day_columns":0,"half_hour_table_rows":0,"l_focus":"Subjects (focus did not move)","l_then_enter":"deselects filtered subject"},"after":{"status_header":false,"query_in_top_bar":true,"weekly_day_columns":5,"half_hour_table_rows":5,"l_focus":"Selected","three_pane_ui":true,"manual_overlay_preserves_selection":true},"same_fixture_and_terminal_size":true})
         );
     }
 }
@@ -611,18 +627,35 @@ fn actual_tui_selected_classes_survive_search_and_support_remove_reselect() {
     );
     ui.marker("Preselected 2 subject(s)");
     assert!(!ui.screen.screen().contents().contains("Manual entries"));
-    // Every forward binding must cycle through exactly the same four panes.
-    for key in [b"l".as_slice(), b"\x1b[C", b"\t"] {
-        for title in ["Selected", "Results", "Timetable", "Subjects"] {
-            ui.send(key);
-            ui.marker(&format!("> {title}"));
-        }
+    assert_three_pane_ui(&ui.screen.screen().contents());
+    assert_removed_shortcuts_ignored(&mut ui);
+    // Tab and Shift-Tab cycle through exactly three panes. Horizontal keys
+    // enter Timetable from the lists but navigate schedules inside Timetable.
+    for title in ["Selected", "Timetable", "Subjects"] {
+        ui.send(b"\t");
+        ui.marker(&format!("> {title}"));
+        assert_three_pane_ui(&ui.screen.screen().contents());
     }
-    for key in [b"h".as_slice(), b"\x1b[D"] {
-        for title in ["Timetable", "Results", "Selected", "Subjects"] {
-            ui.send(key);
-            ui.marker(&format!("> {title}"));
-        }
+    for title in ["Timetable", "Selected", "Subjects"] {
+        ui.send(b"\x1b[Z");
+        ui.marker(&format!("> {title}"));
+        assert_three_pane_ui(&ui.screen.screen().contents());
+    }
+    for (forward, backward) in [(b"l".as_slice(), b"h".as_slice()), (b"\x1b[C", b"\x1b[D")] {
+        ui.send(forward);
+        ui.marker("> Selected");
+        ui.send(backward);
+        ui.marker("> Subjects");
+        ui.send(backward);
+        ui.marker("> Timetable");
+        ui.send(b"\t");
+        ui.marker("> Subjects");
+        ui.send(forward);
+        ui.marker("> Selected");
+        ui.send(forward);
+        ui.marker("> Timetable");
+        ui.send(b"\t");
+        ui.marker("> Subjects");
     }
     ui.send(b"/biology\r");
     ui.marker("> [x] B");
@@ -685,12 +718,12 @@ fn actual_tui_selected_classes_survive_search_and_support_remove_reselect() {
             .any(|bytes| bytes == b"\x1b[?1049l")
     );
     println!(
-        "TUI_SELECTED_ACCEPTANCE independent_search=true space_and_enter_remove=true reselect=true four_pane_cycle=true manual_overlay=true terminal_restored=true"
+        "TUI_SELECTED_ACCEPTANCE independent_search=true space_and_enter_remove=true reselect=true three_pane_cycle=true removed_shortcuts_ignored=true manual_overlay=true terminal_restored=true"
     );
 }
 
 #[test]
-fn actual_tui_results_and_timetable_scroll_and_reset_independently() {
+fn actual_tui_timetable_scrolls_and_resets_independently_of_subject_lists() {
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path();
     let mut catalog: Value = serde_json::from_str(include_str!("fixtures/catalog.json")).unwrap();
@@ -736,36 +769,14 @@ fn actual_tui_results_and_timetable_scroll_and_reset_independently() {
     ui.marker("Preselected 11 subject(s)");
     ui.send(b"o");
     ui.marker("Optimal: 1 occupied day(s), 0 gap minute(s).");
-    ui.send(b"r");
-    ui.marker("> Results");
-    let screen = ui.screen.screen().contents();
-    let result_top = pane_contents(&screen, "Results");
-    let timetable_top = pane_contents(&screen, "Timetable");
-    assert!(result_top.contains("Status: OptimalKnown"));
-    assert!(week_row(&timetable_top, "09:00").is_some());
-    assert!(week_row(&result_top, "09:00").is_none());
-
-    ui.send(b"\x1b[F");
-    ui.until("last Results lines", |s| {
-        pane_contents(s, "Results").contains("Output:")
-    });
-    previous_results_pages_until(&mut ui, "U9: no known meeting components");
-    ui.send(b"\x1b[F");
-    ui.until("return to last Results lines", |s| {
-        pane_contents(s, "Results").contains("Output:")
-    });
-    let result_bottom = pane_contents(&ui.screen.screen().contents(), "Results");
-    assert_ne!(result_bottom, result_top);
-    assert_eq!(
-        pane_contents(&ui.screen.screen().contents(), "Timetable"),
-        timetable_top
-    );
     ui.send(b"t");
     ui.marker("> Timetable");
-    assert_eq!(
-        pane_contents(&ui.screen.screen().contents(), "Results"),
-        result_bottom
-    );
+    let screen = ui.screen.screen().contents();
+    assert_three_pane_ui(&screen);
+    let subjects_top = pane_contents(&screen, "Subjects");
+    let selected_top = pane_contents(&screen, "Selected");
+    let timetable_top = pane_contents(&screen, "Timetable");
+    assert!(week_row(&timetable_top, "09:00").is_some());
 
     for (down, up) in [
         (b"j".as_slice(), b"k".as_slice()),
@@ -773,21 +784,19 @@ fn actual_tui_results_and_timetable_scroll_and_reset_independently() {
         (b"\x1b[6~", b"\x1b[5~"),
     ] {
         ui.send(down);
-        ui.until("Timetable scrolled without moving Results", |s| {
+        ui.until("Timetable scrolled without moving subject lists", |s| {
             pane_contents(s, "Timetable") != timetable_top
         });
-        assert_eq!(
-            pane_contents(&ui.screen.screen().contents(), "Results"),
-            result_bottom
-        );
+        let screen = ui.screen.screen().contents();
+        assert_eq!(pane_contents(&screen, "Subjects"), subjects_top);
+        assert_eq!(pane_contents(&screen, "Selected"), selected_top);
         ui.send(up);
         ui.until("Timetable returns to first page", |s| {
             pane_contents(s, "Timetable") == timetable_top
         });
-        assert_eq!(
-            pane_contents(&ui.screen.screen().contents(), "Results"),
-            result_bottom
-        );
+        let screen = ui.screen.screen().contents();
+        assert_eq!(pane_contents(&screen, "Subjects"), subjects_top);
+        assert_eq!(pane_contents(&screen, "Selected"), selected_top);
     }
     ui.send(b"\x1b[F");
     ui.until("Timetable End reaches late weekday rows", |s| {
@@ -795,63 +804,58 @@ fn actual_tui_results_and_timetable_scroll_and_reset_independently() {
     });
     let timetable_bottom = pane_contents(&ui.screen.screen().contents(), "Timetable");
     assert!(week_row(&timetable_bottom, "09:00").is_none());
-    assert_eq!(
-        pane_contents(&ui.screen.screen().contents(), "Results"),
-        result_bottom
-    );
+    let screen = ui.screen.screen().contents();
+    assert_eq!(pane_contents(&screen, "Subjects"), subjects_top);
+    assert_eq!(pane_contents(&screen, "Selected"), selected_top);
     ui.send(b"\x1b[H");
     ui.until("Timetable Home resets only timetable", |s| {
         pane_contents(s, "Timetable") == timetable_top
     });
-    assert_eq!(
-        pane_contents(&ui.screen.screen().contents(), "Results"),
-        result_bottom
-    );
     ui.send(b"\x1b[F");
     ui.until("Timetable End restores last page", |s| {
         pane_contents(s, "Timetable") == timetable_bottom
     });
 
-    ui.send(b"r");
-    ui.until("r resets Results but not Timetable", |s| {
-        s.contains("> Results") && pane_contents(s, "Results") == result_top
+    ui.send(b"s");
+    ui.marker("> Selected");
+    ui.send(b"\x1b[6~");
+    ui.until("Selected scrolls to the last subject", |s| {
+        pane_contents(s, "Selected").contains("> W Long weekday")
     });
     assert_eq!(
         pane_contents(&ui.screen.screen().contents(), "Timetable"),
         timetable_bottom
     );
-    ui.send(b"\x1b[F");
-    ui.until("Results End restores last page", |s| {
-        pane_contents(s, "Results") == result_bottom
-    });
-    ui.send(b"l");
+    ui.send(b"\t");
     ui.marker("> Timetable");
     assert_eq!(
         pane_contents(&ui.screen.screen().contents(), "Timetable"),
         timetable_bottom
     );
+    let selected_bottom = pane_contents(&ui.screen.screen().contents(), "Selected");
+    assert_ne!(selected_bottom, selected_top);
     ui.send(b"t");
-    ui.until("t resets Timetable but not Results", |s| {
+    ui.until("t resets Timetable without moving subject lists", |s| {
         pane_contents(s, "Timetable") == timetable_top
     });
     assert_eq!(
-        pane_contents(&ui.screen.screen().contents(), "Results"),
-        result_bottom
+        pane_contents(&ui.screen.screen().contents(), "Selected"),
+        selected_bottom
     );
     ui.send(b"q");
     ui.marker("TERMINAL_RESTORED");
     assert!(ui.child.wait().unwrap().success());
     println!(
-        "TUI_SCROLL_ACCEPTANCE separate_panes=true timetable_j_k_arrows_pages_home_end=true results_r_reset_only=true timetable_t_reset_only=true terminal_restored=true"
+        "TUI_SCROLL_ACCEPTANCE independent_subject_lists=true timetable_j_k_arrows_pages_home_end=true focus_preserves_scroll=true timetable_t_reset_only=true terminal_restored=true"
     );
 }
 
 #[test]
-fn actual_tui_80x24_reaches_members_all_notices_and_exports() {
+fn actual_tui_80x24_navigates_sessions_and_exports_with_unknown_subjects() {
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path();
     let mut catalog: Value = serde_json::from_str(include_str!("fixtures/catalog.json")).unwrap();
-    // More notices than the old six-notice cap, through the real adapter and solver.
+    // Unknown meeting records must remain selectable without blocking export.
     for i in 0..10 {
         let id = format!("U{i}");
         catalog["classes"][&id] = serde_json::json!({
@@ -861,6 +865,30 @@ fn actual_tui_80x24_reaches_members_all_notices_and_exports() {
     let catalog_path = dir.join("catalog.json");
     fs::write(&catalog_path, catalog.to_string()).unwrap();
     let term_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/term.json");
+    let reference = cli(
+        dir,
+        &[
+            "--catalog",
+            catalog_path.to_str().unwrap(),
+            "--term",
+            term_path,
+            "optimize",
+            "A",
+            "B",
+        ],
+    );
+    let members = reference["solution"]["choices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|choice| choice["requirement_id"] == "A/lecture")
+        .unwrap()["members"]
+        .as_array()
+        .unwrap();
+    assert_eq!(members.len(), 2);
+    let first_label = members[0]["label"].as_str().unwrap();
+    let next_label = members[1]["label"].as_str().unwrap();
+    let next_room = members[1]["room"].as_str().unwrap();
     let mut args = vec![
         "--catalog",
         catalog_path.to_str().unwrap(),
@@ -888,21 +916,18 @@ fn actual_tui_80x24_reaches_members_all_notices_and_exports() {
         .collect::<String>();
     assert!(header.contains("Search subjects"));
     assert!(!header.contains("Status"));
+    assert_three_pane_ui(&ui.screen.screen().contents());
     ui.send(b"l");
     ui.marker("> Selected");
     ui.send(b"\x1b[C");
-    ui.marker("> Results");
-    ui.send(b"\t");
     ui.marker("> Timetable");
-    ui.send(b"l");
+    ui.send(b"\t");
     ui.marker("> Subjects");
     ui.send(b"h");
     ui.marker("> Timetable");
-    ui.send(b"\x1b[D");
-    ui.marker("> Results");
-    ui.send(b"h");
+    ui.send(b"\x1b[Z");
     ui.marker("> Selected");
-    ui.send(b"h");
+    ui.send(b"\x1b[D");
     ui.marker("> Subjects");
     ui.send(b"/hjkl");
     ui.until("search input, not navigation shortcuts", |s| {
@@ -920,69 +945,62 @@ fn actual_tui_80x24_reaches_members_all_notices_and_exports() {
     ui.send(b"?");
     ui.marker("Home/End");
     ui.marker("PgUp/PgDn");
-    ui.marker("Independently scroll results or timetable.");
+    ui.marker("Scroll the timetable.");
+    assert!(
+        !ui.screen
+            .screen()
+            .contents()
+            .to_lowercase()
+            .contains("results")
+    );
     ui.send(b"?");
     ui.send(b"o");
     ui.marker("Optimal: 1 occupied day(s), 0 gap minute(s).");
-    ui.send(b"r");
-    ui.marker("Timetable");
+    ui.send(b"t");
     ui.until("weekday 30-minute grid", |s| {
-        s.contains("> Results")
-            && s.contains("PgUp/Dn |")
+        s.contains("> Timetable")
             && ["Mon", "Tue", "Wed", "Thu", "Fri", "09:00", "09:30"]
                 .iter()
                 .all(|label| s.contains(label))
     });
     println!("WEEK_VIEW_80x24\n{}", ui.screen.screen().contents());
-    ui.send(b"n");
-    ui.marker("(2/2)");
-    ui.send(b"j");
-    ui.marker("> B/lecture:");
-    ui.send(b"k");
-    ui.marker("> A/lecture:");
-    ui.send(b"\x1b[B");
-    ui.marker("> B/lecture:");
-    ui.send(b"\x1b[A");
-    ui.marker("> A/lecture:");
-    // End reaches the true final line. The smaller Results pane may need a
-    // preceding page to expose the final unresolved notice in its entirety.
-    ui.send(b"\x1b[F");
-    ui.until("last Results lines", |s| {
-        pane_contents(s, "Results").contains("Output:")
-    });
-    previous_results_pages_until(&mut ui, "U9: no known meeting components");
-    ui.send(b"\x1b[H");
-    ui.marker("Status: OptimalKnown");
-    let timetable = pane_contents(&ui.screen.screen().contents(), "Timetable");
-    ui.send(b"\x1b[6~"); // PageDown scrolls content, not the selected component.
-    ui.until("paged results with timetable still visible", |s| {
-        !pane_contents(s, "Results").contains("Status: OptimalKnown")
-    });
-    assert_eq!(
-        pane_contents(&ui.screen.screen().contents(), "Timetable"),
-        timetable
-    );
-    ui.send(b"\x1b[5~");
-    ui.marker("Status: OptimalKnown");
-    assert_eq!(
-        pane_contents(&ui.screen.screen().contents(), "Timetable"),
-        timetable
-    );
+    ui.send(b"\r");
+    ui.marker("Sessions: Enter options");
+    for (key, requirement) in [
+        (b"j".as_slice(), "B/lecture"),
+        (b"k".as_slice(), "A/lecture"),
+        (b"\x1b[B".as_slice(), "B/lecture"),
+        (b"\x1b[A".as_slice(), "A/lecture"),
+    ] {
+        ui.send(key);
+        ui.until(&format!("selected timetable session {requirement}"), |s| {
+            s.lines()
+                .any(|line| line.starts_with("> Timetable") && line.contains(requirement))
+        });
+    }
+    ui.send(b"\r");
+    ui.marker("Options: h/l switch");
+    assert_removed_shortcuts_ignored(&mut ui);
+    for (key, label) in [
+        (b"l".as_slice(), next_label),
+        (b"\x1b[D".as_slice(), first_label),
+        (b"\x1b[C".as_slice(), next_label),
+    ] {
+        ui.send(key);
+        ui.marker(&format!("A/lecture now uses {label}"));
+    }
+    ui.send(b"\x1b");
+    ui.marker("Sessions: Enter options");
+    ui.send(b"\x1b");
+    ui.marker("Enter sessions");
+    assert_three_pane_ui(&ui.screen.screen().contents());
     ui.send(b"e");
     ui.marker("Exported");
-    ui.send(b"\x1b[F");
-    ui.until("last wrapped export notice", |s| {
-        pane_contents(s, "Results")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .contains("Export notice: U9: no known meeting components")
-    });
     let text = fs::read_to_string(&output).unwrap();
     let parsed: icalendar::Calendar = text.parse().unwrap();
     assert_eq!(parsed.events().count(), 6);
     assert!(
-        text.contains("LOCATION:Room A"),
+        text.contains(&format!("LOCATION:{next_room}")),
         "switched member must reach export"
     );
     ui.send(b"q");
@@ -996,14 +1014,14 @@ fn actual_tui_80x24_reaches_members_all_notices_and_exports() {
     println!(
         "UX_OBSERVATION {}",
         serde_json::json!({
-            "requirement":"small_terminal_controls_and_disclosure", "terminal":"80x24",
+            "requirement":"small_terminal_controls_and_export", "terminal":"80x24",
             "search_header_replaces_status":true, "hjkl_typed_in_search":true,
-            "horizontal_focus_sequence":["Subjects","Selected","Results","Timetable","Subjects","Timetable","Results","Selected","Subjects"],
+            "focus_sequence":["Subjects","Selected","Timetable","Subjects","Timetable","Selected","Subjects"],
             "vertical_keys_checked":["j","k","Up","Down"],
-            "result_navigation_checked":["r","PgUp","PgDn","Home","End","n"],
-            "last_unresolved_notice_reached":"U9", "last_export_notice_reached":"U9",
+            "timetable_navigation_checked":["t","Enter","j","k","Up","Down","l","Left","Right","Esc"],
+            "removed_shortcuts_ignored":["r","n","p"], "unknown_subjects_selected":10,
             "same_time_member_position":"2/2", "exported_events":parsed.events().count(),
-            "exported_selected_room":"Room A", "termios_and_alternate_screen_restored":true
+            "exported_selected_room":next_room, "termios_and_alternate_screen_restored":true
         })
     );
 }
@@ -1090,18 +1108,62 @@ fn actual_tui_live_selection_editor_solver_member_switch_export_and_restore() {
         reference["solution"]["score"]["gap_minutes"]
     );
     ui.marker(&expected);
-    let index = reference["solution"]["choices"]
+    let updated = cli(dir, &["--offline", "optimize", "6.1200", "18.01"]);
+    let choices = updated["solution"]["choices"].as_array().unwrap();
+    let mut blocks: Vec<_> = choices
+        .iter()
+        .flat_map(|choice| {
+            choice["meetings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|meeting| {
+                    let day = meeting["weekday"].as_u64().unwrap();
+                    (day < 5).then_some((
+                        day,
+                        meeting["start_minute"].as_u64().unwrap(),
+                        choice["requirement_id"].as_str().unwrap(),
+                    ))
+                })
+        })
+        .collect();
+    blocks.sort_unstable();
+    let target = blocks
+        .iter()
+        .find(|block| block.2 == "6.1200/lecture")
+        .unwrap();
+    let previous_days = blocks
+        .iter()
+        .filter(|block| block.0 < target.0)
+        .map(|block| block.0)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let same_day: Vec<_> = blocks.iter().filter(|block| block.0 == target.0).collect();
+    let earlier_sessions = same_day.iter().position(|block| *block == target).unwrap();
+    ui.send(b"t\r");
+    ui.marker("Sessions: Enter options");
+    // Horizontal movement reaches the next occupied day. Move to its first
+    // session before walking down to the target, independent of choice order.
+    ui.send(&vec![b'l'; previous_days]);
+    ui.send(&vec![b'k'; same_day.len()]);
+    ui.send(&vec![b'j'; earlier_sessions]);
+    ui.until("live lecture selected in timetable", |s| {
+        s.lines()
+            .any(|line| line.starts_with("> Timetable") && line.contains("6.1200/lecture"))
+    });
+    ui.send(b"\r");
+    ui.marker("Options: h/l switch");
+    let member_index = choices
+        .iter()
+        .find(|choice| choice["requirement_id"] == "6.1200/lecture")
+        .unwrap()["members"]
         .as_array()
         .unwrap()
         .iter()
-        .position(|c| c["requirement_id"] == "6.1200/lecture")
+        .position(|member| member["room"] == "PTY ROOM")
         .unwrap();
-    ui.send(b"r");
-    for _ in 0..index {
-        ui.send(b"\x1b[B");
-    }
-    ui.send(b"n");
-    ui.marker("PTY ROOM");
+    ui.send(&vec![b'l'; member_index]);
+    ui.marker("PTY acceptance alternative");
     ui.send(b"e");
     ui.marker("Exported");
     let calendar = fs::read_to_string(&output).unwrap();

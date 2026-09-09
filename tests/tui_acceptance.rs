@@ -746,7 +746,7 @@ fn actual_tui_week_replay_preserves_exact_times_and_records_observations() {
     assert_eq!(grid_header.matches('│').count(), 7, "no parent box sides");
     println!(
         "UX_OBSERVATION {}",
-        serde_json::json!({"requirement":"weekly_grid", "headers":headers, "visible_half_hour_rows":observed_times.len(), "first_row":observed_times.first(), "last_row":observed_times.last(), "monday_shared_bucket":first[1], "all_weekdays_placed":true,"weekend_disclosed":true, "adjacent_meetings_not_conflicts":true})
+        serde_json::json!({"requirement":"weekly_grid", "headers":headers, "visible_hour_labels":observed_times.len(), "first_row":observed_times.first(), "last_row":observed_times.last(), "monday_shared_bucket":first[1], "all_weekdays_placed":true,"weekend_disclosed":true, "adjacent_meetings_not_conflicts":true})
     );
 
     // Drill into the first chronological session (W), then its same-time
@@ -1677,4 +1677,51 @@ fn actual_tui_nested_navigation_cycles_optima_blocks_and_fixed_time_members() {
     println!(
         "UX_OBSERVATION nested_navigation: real executable, 2 equal optima, all hjkl/arrows verified by terminal focus color, fixed-time member and exported room/time verified, Escape backs out, Tab exits, terminal restored"
     );
+}
+
+#[test]
+fn actual_tui_empty_timetable_is_readable_and_closed_past_1330() {
+    let temp = tempfile::tempdir().unwrap();
+    let args = [
+        "--catalog",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/catalog.json"),
+        "--term",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/term.json"),
+        "tui",
+    ];
+    let mut ui = Driver::with_size(temp.path(), &temp.path().join("unused.ics"), 40, 120, &args);
+    ui.until("daytime empty timetable rendered", |s| {
+        s.contains("No timetable yet.") && s.contains("14:00")
+    });
+    let screen = ui.screen.screen().contents();
+    let table = pane_contents(&screen, "Timetable");
+    let top = table.lines().find(|line| line.starts_with('┌')).unwrap();
+    let bottom = table.lines().find(|line| line.starts_with('└')).unwrap();
+    assert!(top.ends_with('┐') && bottom.ends_with('┘'));
+    assert_eq!(top.chars().count(), bottom.chars().count());
+    assert_eq!(bottom.matches('┴').count(), 5);
+    let rows: Vec<_> = table
+        .lines()
+        .filter(|line| line.starts_with('│') && !line.contains("Time"))
+        .collect();
+    assert!(rows.first().unwrap().starts_with("│08:00"));
+    assert!(rows.last().unwrap().starts_with("│14:00"));
+    for (index, row) in rows.iter().enumerate() {
+        let cells: Vec<_> = row.split('│').collect();
+        assert!(cells[2..7].iter().all(|cell| cell.trim().is_empty()));
+        assert_eq!(cells[1].trim().is_empty(), index % 2 == 1);
+    }
+    println!(
+        "TIMETABLE_READABILITY_OBSERVATION {}",
+        serde_json::json!({
+            "terminal": "120x40", "first_hour": "08:00", "last_visible_hour": "14:00",
+            "empty_day_cells": rows.len() * 5, "dots": 0,
+            "hour_labels": rows.iter().filter(|row| row.contains(":00")).count(),
+            "half_hour_rows": rows.len(), "border_width": bottom.chars().count(),
+            "connected_bottom_junctions": 5, "bottom_corners": "└┘"
+        })
+    );
+    ui.send(b"q");
+    ui.marker("TERMINAL_RESTORED");
+    assert!(ui.child.wait().unwrap().success());
 }
